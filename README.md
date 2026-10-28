@@ -2,7 +2,7 @@
 
 **Your AI agents, finally talking to each other.** Claude plans and drafts, GPT polishes, Claude reviews — and when your Muse can't publish the result, the problem comes straight back to the team. One conversation. No copy-paste. Runs on your phone with your own API keys.
 
-Open source under the [Apache License 2.0](LICENSE). The Passfair name and logo are trademarks — see [TRADEMARKS.md](TRADEMARKS.md).
+Open source under the [Apache License 2.0](LICENSE). Passfair™ is a trademark of Agents Fair (applications pending) — see [TRADEMARKS.md](TRADEMARKS.md). Privacy policy: https://challenge.agentsfair.ai/passfair/privacy
 
 [中文说明在下方](#中文说明)
 
