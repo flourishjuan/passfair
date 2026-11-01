@@ -121,16 +121,16 @@ Write in the same language as the brief unless the brief asks otherwise.`;
 
 const SYSTEM: Record<Role, string> = {
   planner: `${COMMON}
-Your role: PLANNER. Turn the brief into a short, concrete work plan for the Worker: the exact deliverable, its structure, acceptance criteria the Reviewer will check, known facts from the material, open questions and assumptions. If a STARTING DRAFT is supplied, assess it first: what to keep, what is wrong or missing. Be specific and brief (under 400 words). Do not write the deliverable itself.`,
+Your role: PLANNER. Turn the brief into a short, concrete work plan for the Worker: the exact deliverable, its structure, acceptance criteria the Reviewer will check, known facts from the material, open questions and assumptions. The acceptance criteria MUST include explicit design and structure criteria — organisation, section order, formatting and consistency; for code, architecture, interfaces and naming — not only content and factual criteria, so the Reviewer has concrete design and structure standards to check against. If a STARTING DRAFT is supplied, assess it first: what to keep, what is wrong or missing. Be specific and brief (under 400 words). Do not write the deliverable itself.`,
   worker: `${COMMON}
 Your role: WORKER. Produce the complete deliverable described in the brief and plan. Follow the plan's structure and acceptance criteria. Label assumptions clearly. If a STARTING DRAFT is supplied, build on it rather than starting over. When you receive issues (from the Reviewer, or reported back from deployment/publishing), fix every one of them and do not reintroduce earlier problems. Output only the deliverable, no commentary about the process.`,
   polisher: `${COMMON}
 Your role: POLISHER. You receive a complete deliverable from the Worker. Improve expression, tone, clarity, formatting and audience fit. Do NOT change facts, numbers, code behaviour, commitments or the meaning of any statement; do NOT add claims. Output the full polished deliverable only.`,
   reviewer: `${COMMON}
-Your role: REVIEWER. You are independent and strict. Check the deliverable against the brief, the plan's acceptance criteria and the supplied material: factual errors, unsupported claims, contradictions, missing requirements, broken structure, wrong language, unsafe or impractical advice. If deployment or publishing feedback is present, verify it has been addressed.
+Your role: REVIEWER. You are independent and strict. Check the deliverable against the brief, the plan's acceptance criteria and the supplied material: factual errors, unsupported claims, contradictions, missing requirements, broken structure, wrong language, unsafe or impractical advice. Always assess design and structure as its own category — organisation, section order and flow, formatting consistency; for code, architecture, interfaces and naming — and report problems in that category as issues even when every fact is correct. If deployment or publishing feedback is present, verify it has been addressed.
 Respond with ONLY a JSON object, no prose before or after, in this exact shape:
 {"verdict":"pass"|"revise","score":0-10,"summary":"one or two sentences","issues":[{"severity":"high"|"medium"|"low","where":"section or quote","problem":"what is wrong","fix":"what to change"}]}
-Use "pass" only when there are no high or medium issues. Be concrete; vague feedback is useless to the Worker.`,
+Use "pass" only when there are no high or medium issues and the deliverable genuinely merits a score of 8 or higher; a score below 8 is always "revise", never "pass". Be concrete; vague feedback is useless to the Worker.`,
 };
 
 export function systemFor(job: Job, role: Role): string {
@@ -199,9 +199,10 @@ export function parseReview(text: string): Review {
       }))
     : [];
   const serious = issues.some((i) => i.severity !== "low");
+  const score = Number.isFinite(Number(data.score)) ? Math.max(0, Math.min(10, Number(data.score))) : null;
   return {
-    verdict: data.verdict === "pass" && !serious ? "pass" : "revise",
-    score: Number.isFinite(Number(data.score)) ? Math.max(0, Math.min(10, Number(data.score))) : null,
+    verdict: data.verdict === "pass" && !serious && !(score !== null && score < 8) ? "pass" : "revise",
+    score,
     summary: String(data.summary || "").slice(0, 1000),
     issues,
   };
