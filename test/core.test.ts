@@ -96,6 +96,11 @@ test("parseReview is tolerant and strict about 'pass'", () => {
   assert.equal(parseReview('{"verdict":"pass","score":42}').score, 10);
 });
 
+test("parseReview never passes a low score", () => {
+  assert.equal(parseReview('{"verdict":"pass","score":7,"issues":[]}').verdict, "revise");
+  assert.equal(parseReview('{"verdict":"pass","score":8,"issues":[]}').verdict, "pass");
+});
+
 test("feedbackEvent shapes", () => {
   assert.equal(feedbackEvent("you", "p", 1).review?.issues[0].fix, "Follow the user's new instruction.");
   assert.match(feedbackEvent("muse", "p", 1).review?.summary || "", /muse/);
