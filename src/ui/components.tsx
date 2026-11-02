@@ -231,7 +231,7 @@ export function MusePanel({
       </Text>
       {paired ? (
         <Text style={s.ok}>
-          Muse is paired. Reviewer-approved work is handed to Muse according to your Team setting.
+          Muse is paired. Work approved by both reviewers is handed to Muse according to your Team setting.
         </Text>
       ) : settings.relay_code ? (
         <View style={{ gap: 6 }}>
@@ -271,6 +271,7 @@ const roleLabel: Record<string, string> = {
   worker: "Worker",
   polisher: "Polisher",
   reviewer: "Reviewer",
+  verifier: "Cross-checker",
   feedback: "Feedback",
   handoff: "→ Muse",
   published: "Muse · published",
@@ -310,7 +311,9 @@ export function Bubble({ e }: { e: JobEvent }) {
         style={[
           s.bubble,
           mine && s.bubbleMine,
-          e.role === "reviewer" && review && (review.verdict === "pass" ? s.bubblePass : s.bubbleRevise),
+          (e.role === "reviewer" || e.role === "verifier") &&
+            review &&
+            (review.verdict === "pass" ? s.bubblePass : s.bubbleRevise),
           e.role === "published" && s.bubblePublished,
         ]}
       >
@@ -318,7 +321,7 @@ export function Bubble({ e }: { e: JobEvent }) {
           {who(e)}
           {e.round ? ` · round ${e.round}` : ""}
         </Text>
-        {e.role === "reviewer" && review ? (
+        {(e.role === "reviewer" || e.role === "verifier") && review ? (
           <View style={{ gap: 4 }}>
             <Text style={s.verdict}>
               {review.verdict === "pass" ? "PASS" : "REVISE"}
@@ -371,11 +374,13 @@ export function Typing({ job }: { job: Job }) {
         <Text style={s.body}>
           {role === "reviewer"
             ? "reviewing"
-            : role === "planner"
-              ? "planning"
-              : role === "polisher"
-                ? "polishing"
-                : "drafting"}
+            : role === "verifier"
+              ? "cross-checking"
+              : role === "planner"
+                ? "planning"
+                : role === "polisher"
+                  ? "polishing"
+                  : "drafting"}
           {dots}
         </Text>
       </View>
@@ -412,19 +417,37 @@ export function TeamSheet({
           />
           <Text style={s.fine}>{presets[preset].description}</Text>
         </Field>
-        <Field label="Max rounds">
+        <Field label="Cross-check rounds (always run)">
           <Choice
-            value={String(settings.maxRounds || 3)}
-            options={["1", "2", "3", "4", "5", "6"].map((v) => ({ value: v, label: v }))}
+            value={String(settings.minRounds || 2)}
+            options={["1", "2", "3", "4"].map((v) => ({ value: v, label: v }))}
+            onChange={(v) => {
+              const min = Number(v);
+              onChange({ minRounds: min, maxRounds: Math.max(min, settings.maxRounds || 4) });
+            }}
+          />
+          <Text style={s.fine}>
+            Every round is checked by two AIs from different vendors (for example Claude and GPT). The team always runs
+            at least this many rounds, then stops as soon as both approve. Connect a second AI to turn cross-checking
+            on.
+          </Text>
+        </Field>
+        <Field label="Max rounds (if they still disagree)">
+          <Choice
+            value={String(Math.max(settings.maxRounds || 4, settings.minRounds || 2))}
+            options={["1", "2", "3", "4", "5", "6"]
+              .filter((v) => Number(v) >= (settings.minRounds || 2))
+              .map((v) => ({ value: v, label: v }))}
             onChange={(v) => onChange({ maxRounds: Number(v) })}
           />
+          <Text style={s.fine}>The final version is the best-reviewed round, not simply the last one.</Text>
         </Field>
         <Field label="Hand off to Muse">
           <Choice
             value={settings.autoHandoff || "off"}
             options={[
               { value: "off", label: "Only when I say so" },
-              { value: "approved", label: "When the Reviewer approves" },
+              { value: "approved", label: "When both reviewers approve" },
               { value: "always", label: "Always" },
             ]}
             onChange={(v) => onChange({ autoHandoff: v })}

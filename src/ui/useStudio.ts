@@ -137,7 +137,8 @@ export function useStudio(toast: Toast) {
         mode: live ? "live" : "demo",
         preset,
         assignments: autoAssign(preset, live ? connected : []),
-        maxRounds: settingsRef.current.maxRounds || 3,
+        maxRounds: settingsRef.current.maxRounds || 4,
+        minRounds: settingsRef.current.minRounds || 2,
       });
       upsert(j);
       await run(j);
@@ -170,12 +171,11 @@ export function useStudio(toast: Toast) {
       if (!j) return;
       if (!["awaiting_review", "accepted", "stopped", "failed", "delivered", "published"].includes(j.status))
         return toast("Finish or stop the job first.");
-      // Drop a half-finished round so the Worker starts from the last reviewed draft.
-      const workers = j.events.filter((e) => e.role === "worker").length;
-      const reviewers = j.events.filter((e) => e.role === "reviewer").length;
-      if (workers > reviewers) {
-        const i = j.events.map((e) => e.role).lastIndexOf("worker");
-        j.events = j.events.slice(0, i);
+      // Drop a half-finished round (not every reviewer answered) so the Worker starts from the last reviewed draft.
+      const lastWorker = j.events.map((e) => e.role).lastIndexOf("worker");
+      const lastRound = lastWorker >= 0 ? j.events[lastWorker].round : 0;
+      if (lastWorker >= 0 && !(j.rounds || []).some((r) => r.round === lastRound)) {
+        j.events = j.events.slice(0, lastWorker);
       }
       reopenWithFeedback(j, source, problem);
       upsert({ ...j });
@@ -262,7 +262,8 @@ export function useStudio(toast: Toast) {
         mode: connected.length ? "live" : "demo",
         preset: "make_and_ship",
         assignments: autoAssign("make_and_ship", connected),
-        maxRounds: settingsRef.current.maxRounds || 3,
+        maxRounds: settingsRef.current.maxRounds || 4,
+        minRounds: settingsRef.current.minRounds || 2,
         origin: { source: "muse", orderId: o.id },
       });
       upsert(j);

@@ -1,10 +1,15 @@
-// The collaboration loop: Planner → Worker → (Polisher) → Reviewer → (revise → review)* → hand to the human.
+// The collaboration loop: Planner → Worker → (Polisher) → Reviewer + Cross-checker → (revise → review)* → hand off.
+// Cross-check (1.2): each round is reviewed by two agents from different vendors; a round passes only when both pass.
+// The loop always runs at least `minRounds` rounds, stops early only on a full pass after that, never exceeds
+// `maxRounds`, and the final version is the best-reviewed round (later rounds cannot silently make things worse).
 // External feedback (a publishing problem reported by Muse, or a new instruction typed by the user)
 // re-enters the loop as a review. Nothing here browses, sends, pays or publishes.
 import { complete, fail, type Fetcher, type ProviderId, type Usage } from "./providers";
 
-export type Role = "planner" | "worker" | "polisher" | "reviewer";
-export const roles: Role[] = ["planner", "worker", "polisher", "reviewer"];
+export type Role = "planner" | "worker" | "polisher" | "reviewer" | "verifier";
+export const roles: Role[] = ["planner", "worker", "polisher", "reviewer", "verifier"];
+export const reviewRoles: Role[] = ["reviewer", "verifier"];
+export const isReviewRole = (r: string): boolean => r === "reviewer" || r === "verifier";
 export const requiredRoles: Role[] = ["planner", "worker", "reviewer"];
 
 export type FocusId = "logic_code" | "style_expression" | "facts_structure";
@@ -73,6 +78,12 @@ export interface Review {
   issues: Issue[];
   unparsed?: boolean;
 }
+export interface RoundRecord {
+  round: number;
+  passed: boolean;
+  minScore: number | null;
+  verdicts: { role: Role; provider: string; verdict: "pass" | "revise"; score: number | null }[];
+}
 export type FeedbackSource = "you" | "muse" | "manual";
 export interface JobEvent {
   role: Role | "feedback" | "handoff" | "published";
@@ -99,6 +110,7 @@ export interface Job {
   assignments: Assignments;
   focus: Partial<Record<Role, FocusId>>;
   maxRounds: number;
+  minRounds?: number;
   maxOutputTokens: number;
   status: JobStatus;
   outcome: "approved_by_reviewer" | "round_limit_reached" | null;
@@ -111,6 +123,8 @@ export interface Job {
   created: string;
   origin?: { source: "you" | "muse"; orderId?: string };
   handoffs: { deliverableId: string; version: number; at: string; auto: boolean }[];
+  rounds?: RoundRecord[];
+  finalRound?: number;
 }
 
 const COMMON = `You are one of several AI agents collaborating inside Passfair by Agents Fair.
@@ -131,9 +145,22 @@ Your role: REVIEWER. You are independent and strict. Check the deliverable again
 Respond with ONLY a JSON object, no prose before or after, in this exact shape:
 {"verdict":"pass"|"revise","score":0-10,"summary":"one or two sentences","issues":[{"severity":"high"|"medium"|"low","where":"section or quote","problem":"what is wrong","fix":"what to change"}]}
 Use "pass" only when there are no high or medium issues and the deliverable genuinely merits a score of 8 or higher; a score below 8 is always "revise", never "pass". Be concrete; vague feedback is useless to the Worker.`,
+  verifier: "",
+};
+SYSTEM.verifier = `${SYSTEM.reviewer}
+You are the CROSS-CHECKER: a second, independent reviewer from a different AI vendor than the one that wrote the draft. Do not assume the other reviewer caught everything, and do not invent problems to look useful: if the deliverable is genuinely sound, pass it. Check especially that issues raised in earlier rounds stay fixed.`;
+
+const COMPLEMENT: Record<FocusId, FocusId> = {
+  facts_structure: "logic_code",
+  logic_code: "style_expression",
+  style_expression: "facts_structure",
 };
 
 export function systemFor(job: Job, role: Role): string {
+  if (role === "verifier") {
+    const base = (job.focus?.reviewer as FocusId) || "facts_structure";
+    return `${SYSTEM.verifier}\n${focuses[COMPLEMENT[base]].text}`;
+  }
   const f = job.focus?.[role] ? focuses[job.focus[role] as FocusId] : undefined;
   return f ? `${SYSTEM[role]}\n${f.text}` : SYSTEM[role];
 }
@@ -147,7 +174,7 @@ export function promptFor(job: Job, role: Role, round: number): string {
   const seed = job.seed ? `\n\nSTARTING DRAFT (supplied by the user, e.g. from another assistant):\n${job.seed}` : "";
   const plan = job.events.find((e) => e.role === "planner")?.text || "(no plan)";
   const head = `BRIEF:\n${job.goal}\n\nSUPPLIED MATERIAL:\n${material}${seed}`;
-  const critique = lastOf(job, (e) => e.role === "reviewer" || e.role === "feedback");
+  const critique = lastOf(job, (e) => isReviewRole(e.role) || e.role === "feedback");
   const previous = lastDeliverable(job);
   if (role === "planner") return head;
   if (role === "worker") {
@@ -157,8 +184,12 @@ export function promptFor(job: Job, role: Role, round: number): string {
         ? critique.source === "you"
           ? "NEW INSTRUCTION FROM THE USER (takes priority over the plan where they conflict)"
           : `FEEDBACK REPORTED FROM ${String(critique.source || "outside").toUpperCase()} (deployment / publishing)`
-        : `REVIEWER ISSUES TO FIX (round ${critique.round})`;
-    return `${head}\n\nPLAN FROM PLANNER:\n${plan}\n\nPREVIOUS DELIVERABLE:\n${previous}\n\n${label}:\n${JSON.stringify(critique.review, null, 2)}\n\nProduce the corrected, complete deliverable now. Fix every issue.`;
+        : `ISSUES FROM BOTH REVIEWERS TO FIX (round ${critique.round})`;
+    const body =
+      critique.role === "feedback"
+        ? JSON.stringify(critique.review, null, 2)
+        : JSON.stringify(roundReviews(job, critique.round), null, 2);
+    return `${head}\n\nPLAN FROM PLANNER:\n${plan}\n\nPREVIOUS DELIVERABLE:\n${previous}\n\n${label}:\n${body}\n\nProduce the corrected, complete deliverable now. Fix every high and medium issue; where the two reviewers disagree, follow the brief and the supplied material and say nothing about the disagreement in the deliverable. Do not reintroduce problems fixed in earlier rounds.`;
   }
   if (role === "polisher")
     return `${head}\n\nPLAN AND ACCEPTANCE CRITERIA:\n${plan}\n\nWORKER DELIVERABLE (round ${round}):\n${previous}\n\nPolish it now. Keep every fact, number and code exactly as given.`;
@@ -166,7 +197,23 @@ export function promptFor(job: Job, role: Role, round: number): string {
     critique?.role === "feedback"
       ? `\n\nFEEDBACK THAT HAD TO BE ADDRESSED:\n${JSON.stringify(critique.review, null, 2)}`
       : "";
-  return `${head}\n\nPLAN AND ACCEPTANCE CRITERIA:\n${plan}${fb}\n\nDELIVERABLE TO REVIEW (round ${round}):\n${previous}\n\nReview it now. JSON only.`;
+  const earlier = job.events
+    .filter((e) => isReviewRole(e.role) && e.round < round && e.review)
+    .flatMap((e) =>
+      e.review!.issues.filter((i) => i.severity !== "low").map((i) => `- [round ${e.round}] ${i.where}: ${i.problem}`),
+    )
+    .slice(-15);
+  const regress = earlier.length
+    ? `\n\nISSUES RAISED IN EARLIER ROUNDS (verify they are still fixed; report any that came back as high):\n${earlier.join("\n")}`
+    : "";
+  return `${head}\n\nPLAN AND ACCEPTANCE CRITERIA:\n${plan}${fb}${regress}\n\nDELIVERABLE TO REVIEW (round ${round}):\n${previous}\n\nReview it now. JSON only.`;
+}
+
+// All reviews for one round, labelled by seat, for the Worker.
+export function roundReviews(job: Job, round: number) {
+  return job.events
+    .filter((e) => isReviewRole(e.role) && e.round === round && e.review)
+    .map((e) => ({ from: e.role === "verifier" ? "cross-checker" : "reviewer", vendor: e.provider, ...e.review! }));
 }
 
 export function parseReview(text: string): Review {
@@ -268,6 +315,10 @@ export function demoOutput(job: Job, role: Role, round: number): string {
     return `${lastDeliverable(job)}\n\n_(DEMO · Polisher: tone tightened, headings aligned, facts unchanged.)_`;
   if (fb && fb.round >= round - 1)
     return `{"verdict":"pass","score":9,"summary":"The reported problem from ${fb.source} is addressed.","issues":[]}`;
+  if (role === "verifier")
+    return round === 1
+      ? `{"verdict":"revise","score":7,"summary":"Cross-check: structure is fine, but one claim is unsupported.","issues":[{"severity":"medium","where":"Key points · Point B","problem":"Not backed by the supplied material.","fix":"Mark it as an assumption."}]}`
+      : `{"verdict":"pass","score":9,"summary":"Cross-check: earlier issues stay fixed; nothing new found.","issues":[]}`;
   return round === 1
     ? `{"verdict":"revise","score":6,"summary":"Draft covers the brief but hides an assumption and leaves next steps empty.","issues":[{"severity":"high","where":"Key points · Point B","problem":"Presented as fact but not in the supplied material.","fix":"Label it as an assumption or remove it."},{"severity":"medium","where":"Next steps","problem":"'To be defined' is not a next step.","fix":"List concrete, owner-assignable actions."}]}`
     : `{"verdict":"pass","score":9,"summary":"Issues from round 1 are fixed; assumptions labelled, next steps concrete.","issues":[{"severity":"low","where":"Summary","problem":"Could be one sentence shorter.","fix":"Optional tightening."}]}`;
@@ -344,6 +395,9 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
   };
   const aborted = () => !!signal?.aborted || isCancelled();
   const hasPolisher = !!job.assignments.polisher;
+  const checkers: Role[] = job.assignments.verifier ? ["reviewer", "verifier"] : ["reviewer"];
+  const minRounds = Math.min(job.minRounds || 1, job.maxRounds);
+  job.rounds = job.rounds || [];
 
   job.status = "running";
   job.outcome = null;
@@ -371,24 +425,52 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       if (aborted()) return;
       push("polisher", round, polished);
     }
-    job.current = { role: "reviewer", round };
-    save(job);
-    const rev = await call("reviewer", round);
-    if (aborted()) return;
-    const review = parseReview(rev.text);
-    push("reviewer", round, rev, { review });
-    if (review.verdict === "pass") {
-      job.outcome = "approved_by_reviewer";
-      break;
+    const verdicts: RoundRecord["verdicts"] = [];
+    for (const r of checkers) {
+      job.current = { role: r, round };
+      save(job);
+      const rev = await call(r, round);
+      if (aborted()) return;
+      const review = parseReview(rev.text);
+      push(r, round, rev, { review });
+      verdicts.push({ role: r, provider: rev.provider, verdict: review.verdict, score: review.score });
     }
-    if (round === job.maxRounds) job.outcome = "round_limit_reached";
+    const passed = verdicts.every((v) => v.verdict === "pass");
+    const scores = verdicts.map((v) => v.score).filter((x): x is number => x !== null);
+    job.rounds = [
+      ...job.rounds.filter((x) => x.round !== round),
+      { round, passed, minScore: scores.length ? Math.min(...scores) : null, verdicts },
+    ];
+    save(job);
+    if (passed && round >= minRounds) break;
     round++;
   }
+  const pick = bestRound(job);
   job.current = null;
   job.status = "awaiting_review";
-  job.final = lastDeliverable(job);
+  job.outcome = pick?.passed ? "approved_by_reviewer" : "round_limit_reached";
+  job.finalRound = pick?.round;
+  job.final = (pick && deliverableOf(job, pick.round)) || lastDeliverable(job);
   job.version = (job.version || 0) + 1;
   save(job);
+}
+
+// Deliverable text produced in a given round (polished version if there is one).
+export function deliverableOf(job: Job, round: number): string {
+  return (
+    [...job.events].reverse().find((e) => (e.role === "polisher" || e.role === "worker") && e.round === round)?.text ||
+    ""
+  );
+}
+
+// Best round since the last outside feedback: fully passed beats not passed, then higher lowest-score, then later.
+export function bestRound(job: Job): RoundRecord | undefined {
+  const fb = lastOf(job, (e) => e.role === "feedback");
+  const after = fb ? fb.round : 0;
+  const pool = (job.rounds || []).filter((r) => r.round > after && deliverableOf(job, r.round));
+  return pool.sort(
+    (a, b) => Number(b.passed) - Number(a.passed) || (b.minScore ?? -1) - (a.minScore ?? -1) || b.round - a.round,
+  )[0];
 }
 
 // Re-opens a finished job with external feedback: drops the half-round in progress, adds budget, resumes.
@@ -409,6 +491,7 @@ export function newJob(input: {
   preset: PresetId;
   assignments: Assignments;
   maxRounds?: number;
+  minRounds?: number;
   origin?: Job["origin"];
 }): Job {
   const p = presets[input.preset];
@@ -423,7 +506,8 @@ export function newJob(input: {
     preset: input.preset,
     assignments,
     focus: { ...p.roles },
-    maxRounds: input.maxRounds ?? 3,
+    maxRounds: Math.max(input.maxRounds ?? 3, input.minRounds ?? 1),
+    minRounds: input.minRounds ?? 1,
     maxOutputTokens: 2500,
     status: "queued",
     outcome: null,
@@ -439,5 +523,5 @@ export function newJob(input: {
 }
 
 export function packageFor(j: Job): string {
-  return `${j.final || lastDeliverable(j)}\n\n---\nFrom Passfair · job ${j.id.slice(0, 8)} · version ${j.version || 1} · ${j.outcome === "approved_by_reviewer" ? "reviewer approved" : "round limit reached — read critically"}\nIf publishing or deploying this fails, send the error back to Passfair (job ${j.id.slice(0, 8)}) so the team can fix it.`;
+  return `${j.final || lastDeliverable(j)}\n\n---\nFrom Passfair · job ${j.id.slice(0, 8)} · version ${j.version || 1} · ${j.outcome === "approved_by_reviewer" ? (j.assignments.verifier ? "approved by both reviewers" : "reviewer approved") : "not approved within the round limit — read critically"}\nIf publishing or deploying this fails, send the error back to Passfair (job ${j.id.slice(0, 8)}) so the team can fix it.`;
 }

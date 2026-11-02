@@ -68,6 +68,7 @@ export const keys = {
 export interface Settings extends RelaySettings {
   preset?: string;
   maxRounds?: number;
+  minRounds?: number;
   autoHandoff?: "off" | "approved" | "always";
   seenWelcome?: boolean;
 }
