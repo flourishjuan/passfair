@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  bestRound,
   feedbackEvent,
   newJob,
   parseReview,
@@ -156,8 +157,127 @@ test("providers: wire formats and secret-safe errors", async () => {
 
 test("autoAssign puts Claude on logic/review and GPT on polish when both are connected", () => {
   const a = autoAssign("make_and_ship", ["openai", "anthropic"]);
-  assert.deepEqual(a, { planner: "anthropic", worker: "anthropic", polisher: "openai", reviewer: "anthropic" });
+  assert.deepEqual(a, {
+    planner: "anthropic",
+    worker: "anthropic",
+    polisher: "openai",
+    reviewer: "anthropic",
+    verifier: "openai",
+  });
   const b = autoAssign("balanced", ["google"]);
   assert.deepEqual(b, { planner: "google", worker: "google", reviewer: "google" });
   assert.equal(autoAssign("balanced", []).planner, "demo");
+});
+
+test("cross-check: two vendors review every round; pass needs both", async () => {
+  const job = newJob({
+    goal: "Launch post",
+    mode: "demo",
+    preset: "make_and_ship",
+    assignments: { planner: "demo", worker: "demo", polisher: "demo", reviewer: "demo", verifier: "demo" },
+    minRounds: 2,
+    maxRounds: 4,
+  });
+  await runJob(job, deps(job));
+  const roles = job.events.map((e) => e.role);
+  assert.deepEqual(roles, [
+    "planner",
+    "worker",
+    "polisher",
+    "reviewer",
+    "verifier",
+    "worker",
+    "polisher",
+    "reviewer",
+    "verifier",
+  ]);
+  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(job.finalRound, 2);
+  assert.equal(job.rounds!.length, 2);
+  assert.equal(job.rounds![0].passed, false);
+  // The worker in round 2 saw issues from both seats.
+  const p = promptFor(job, "worker", 2);
+  assert.match(p, /ISSUES FROM BOTH REVIEWERS/);
+  assert.match(p, /cross-checker/);
+});
+
+test("autoAssign: second reviewer is always a different vendor; none with one vendor", () => {
+  for (const preset of ["balanced", "code_first", "copy_first", "make_and_ship"] as const) {
+    const a = autoAssign(preset, ["anthropic", "openai"]);
+    assert.ok(a.verifier && a.verifier !== a.reviewer, preset);
+  }
+  assert.equal(autoAssign("make_and_ship", ["anthropic"]).verifier, undefined);
+});
+
+// A scripted fetcher: reviewers answer from a queue, drafts are numbered.
+function scripted(verdicts: string[]) {
+  let n = 0;
+  return async (_url: any, init: any) => {
+    const body = JSON.parse(init.body);
+    const sys = JSON.stringify(body.system || body.messages?.[0] || "");
+    const isReview = /REVIEWER/.test(sys);
+    const text = isReview ? verdicts.shift()! : /PLANNER/.test(sys) ? "plan" : `draft ${++n}`;
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+        stop_reason: "end_turn",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+}
+const PASS = (score: number) => `{"verdict":"pass","score":${score},"summary":"ok","issues":[]}`;
+const REVISE = `{"verdict":"revise","score":5,"summary":"no","issues":[{"severity":"high","where":"x","problem":"p","fix":"f"}]}`;
+const live = (extra: object) =>
+  newJob({
+    goal: "Spec",
+    mode: "live",
+    preset: "balanced",
+    assignments: { planner: "anthropic", worker: "anthropic", reviewer: "anthropic", verifier: "anthropic" },
+    ...extra,
+  });
+const cred = () => ({ provider: "anthropic" as const, model: "m", key: "k" });
+
+test("minimum rounds: a first-round pass still gets a second cross-check round", async () => {
+  const job = live({ minRounds: 2, maxRounds: 4 });
+  await runJob(job, deps(job, { credential: cred, fetcher: scripted([PASS(8), PASS(8), PASS(9), PASS(9)]) as any }));
+  assert.equal(job.events.filter((e) => e.role === "worker").length, 2);
+  assert.equal(job.finalRound, 2);
+  assert.equal(job.outcome, "approved_by_reviewer");
+});
+
+test("best round wins: a later regression does not replace an approved draft", async () => {
+  const job = live({ minRounds: 3, maxRounds: 3 });
+  await runJob(
+    job,
+    deps(job, { credential: cred, fetcher: scripted([REVISE, PASS(8), PASS(9), PASS(9), REVISE, PASS(8)]) as any }),
+  );
+  assert.equal(job.finalRound, 2);
+  assert.equal(job.final, "draft 2");
+  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(bestRound(job)!.round, 2);
+});
+
+test("no round passes both: outcome is not approved, so auto hand-off on approval stays off", async () => {
+  const job = live({ minRounds: 1, maxRounds: 2 });
+  await runJob(job, deps(job, { credential: cred, fetcher: scripted([PASS(9), REVISE, REVISE, PASS(9)]) as any }));
+  assert.equal(job.outcome, "round_limit_reached");
+});
+
+test("muse problem with cross-check: final comes from a round after the feedback", async () => {
+  const job = newJob({
+    goal: "Store listing",
+    mode: "demo",
+    preset: "make_and_ship",
+    assignments: { planner: "demo", worker: "demo", polisher: "demo", reviewer: "demo", verifier: "demo" },
+    minRounds: 2,
+    maxRounds: 4,
+  });
+  await runJob(job, deps(job));
+  reopenWithFeedback(job, "muse", "Title over 30 characters, rejected by the store.");
+  await runJob(job, deps(job));
+  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.ok(job.finalRound! > 2);
+  assert.match(job.final, /muse/);
 });

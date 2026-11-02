@@ -33,6 +33,8 @@ import {
 } from "./src/ui/components";
 import { T } from "./src/ui/theme";
 import { useStudio } from "./src/ui/useStudio";
+import { type ExportFormat, exportJob, exportOrder } from "./src/ui/exportFile";
+import { formats } from "./src/core/export";
 
 const confirm = (title: string, message: string, ok: () => void) => {
   if (Platform.OS === "web") {
@@ -96,6 +98,16 @@ export default function App() {
       await Clipboard.setStringAsync(pkg);
       toast("Copied. Paste into Muse; if publishing fails, paste the error back here as a reply.");
     } else toast((r as any).error || "Nothing to hand off yet.");
+  };
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportAs = async (format: ExportFormat) => {
+    if (!job) return;
+    setExportOpen(false);
+    try {
+      await exportJob(job, format);
+    } catch (e: any) {
+      toast(e?.message || "Export failed.");
+    }
   };
   const share = async () => {
     if (!job) return;
@@ -260,9 +272,11 @@ export default function App() {
                         : job.status === "delivered"
                           ? "Handed off to Muse — waiting for publish"
                           : job.outcome === "approved_by_reviewer"
-                            ? "Final · reviewer approved"
+                            ? job.assignments.verifier
+                              ? `Final · approved by both reviewers${job.finalRound ? ` (round ${job.finalRound})` : ""}`
+                              : "Final · reviewer approved"
                             : job.outcome === "round_limit_reached"
-                              ? "Final · round limit reached, read critically"
+                              ? `Final · not approved by both, best round ${job.finalRound ?? "?"} — read critically`
                               : "Stopped"}{" "}
                       · v{job.version || 0}
                     </Text>
@@ -274,6 +288,11 @@ export default function App() {
                         <Btn label="Resume" small kind="primary" onPress={() => st.resume(job)} />
                       )}
                       <Btn label={musePaired ? "Hand off to Muse" : "Copy for Muse"} small onPress={copyForMuse} />
+                      <Btn
+                        label={exportOpen ? "Export ▴" : "Export ▾"}
+                        small
+                        onPress={() => setExportOpen(!exportOpen)}
+                      />
                       <Btn label="Share" small onPress={share} />
                       <Btn
                         label="Delete"
@@ -286,6 +305,14 @@ export default function App() {
                         }
                       />
                     </View>
+                    {exportOpen && (
+                      <View style={s.row}>
+                        {exportOrder.map((f) => (
+                          <Btn key={f} label={formats[f].label} small onPress={() => exportAs(f)} />
+                        ))}
+                        <Text style={s.fine}>Converted on this phone. No AI call, nothing uploaded.</Text>
+                      </View>
+                    )}
                   </View>
                 )}
               </>
