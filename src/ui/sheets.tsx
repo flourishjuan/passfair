@@ -72,18 +72,35 @@ function AgentForm({
               : `Paste your ${spec.short} API key.`}{" "}
             It stays in this phone's {secureAvailable ? "keychain" : "browser storage"} and goes only to {spec.short}.
           </Text>
-          {!!copied && (
+          {copied ? (
             <Btn
-              label={`Use the ${spec.short} key you just copied`}
+              label={`Use the ${spec.short} key you copied`}
               kind="lime"
               disabled={busy}
               onPress={() => go(copied)}
             />
+          ) : (
+            <Btn
+              label="Paste copied key"
+              kind="lime"
+              small
+              disabled={busy}
+              onPress={async () => {
+                // Read the clipboard only when the user taps (no surprise paste prompts).
+                setErr("");
+                const d = detectKey(await Clipboard.getStringAsync().catch(() => ""));
+                if (d && d.provider === spec.id) setCopied(d.key);
+                else if (d) setErr(`That looks like a ${shortName(d.provider)} key, not a ${spec.short} key.`);
+                else
+                  setErr("No API key found on the clipboard. Copy it on the vendor's page first, or paste it below.");
+              }}
+            />
           )}
+          <Text style={F.label}>API KEY</Text>
           <Input
             value={key}
             onChangeText={setKey}
-            placeholder={spec.keyHint}
+            placeholder={`Paste your key (${spec.keyHint})`}
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}
@@ -93,6 +110,7 @@ function AgentForm({
       {shared && (
         <Text style={F.small}>Signed in through OpenRouter — no key needed. Pick the model this agent uses.</Text>
       )}
+      <Text style={F.label}>MODEL</Text>
       <Input value={model} onChangeText={setModel} autoCapitalize="none" autoCorrect={false} placeholder="Model" />
       <Row>
         {spec.models.map((m) => (

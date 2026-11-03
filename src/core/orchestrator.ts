@@ -809,10 +809,33 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       }
       verdicts.push({ role: "check", provider: "passfair", verdict: gate.verdict, score: null });
     }
-    for (const r of checkers) {
+    for (const r of [...checkers]) {
       job.current = { role: r, round };
       save(job);
-      const rev = await call(r, round);
+      let rev: Out;
+      try {
+        rev = await call(r, round);
+      } catch (e: any) {
+        if (aborted()) return;
+        // The cross-checker failing must not kill the job: carry on with one reviewer and say so.
+        if (r !== "verifier") throw e;
+        const who = job.assignments.verifier || "";
+        delete job.assignments.verifier;
+        checkers.splice(checkers.indexOf("verifier"), 1);
+        job.events.push({
+          role: "check",
+          round,
+          provider: "passfair",
+          model: "rules",
+          text: `Cross-checker unavailable (${e?.message || "error"}). Continuing with one reviewer.`,
+          usage: { input: 0, output: 0 },
+          at: new Date().toISOString(),
+          failed: true,
+        });
+        void who;
+        save(job);
+        continue;
+      }
       if (aborted()) return;
       const review = parseReview(rev.text, job.mode === "live");
       push(r, round, rev, { review });

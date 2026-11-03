@@ -374,6 +374,7 @@ function buildRequest(
       body: {
         model: r.model,
         instructions: r.system,
+        ...(isReasoningModel(r.model) ? { reasoning: { effort: "low" } } : {}),
         input: media.length
           ? [
               {
@@ -438,6 +439,14 @@ function buildRequest(
   };
 }
 
+// Models that think before answering (OpenAI GPT-5 / o-series, Gemini 2.5, Grok 4, DeepSeek reasoner).
+// Their hidden reasoning counts against the output limit, so a tiny limit leaves no room for the answer.
+export const isReasoningModel = (model: string) =>
+  /^(openai\/)?(gpt-5|o\d)/i.test(model) ||
+  /gemini-2\.5|gemini-3/i.test(model) ||
+  /grok-4|reasoner|thinking|sonar-reasoning/i.test(model);
+const MIN_REASONING_BUDGET = 4000;
+
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter((x) => /^https?:\/\//.test(x)))).slice(0, 12);
 
 export function extract(spec: ProviderSpec, data: any): Completion {
@@ -490,10 +499,11 @@ export async function complete(
 ): Promise<Completion> {
   const spec = getProvider(req.provider);
   if (!spec) return fail("Unknown agent. Connect it again from the ••• menu.");
-  const wantSearch = !!req.search && spec.search === "tool";
-  const maxTokens = Math.min(req.maxTokens ?? 4000, spec.maxOut);
-  const once = async (search: boolean) => {
-    const built = buildRequest(spec, { ...req, maxTokens, search });
+  const asked = req.maxTokens ?? 4000;
+  let budget = Math.min(isReasoningModel(req.model) ? Math.max(asked, MIN_REASONING_BUDGET) : asked, spec.maxOut);
+  let searched = !!req.search && spec.search === "tool";
+  const once = async () => {
+    const built = buildRequest(spec, { ...req, maxTokens: budget, search: searched });
     const timeout = AbortSignal.timeout(240000);
     try {
       return await fetcher(built.url, {
@@ -506,44 +516,58 @@ export async function complete(
       return fail(req.signal?.aborted ? "Cancelled." : `${spec.short}: connection failed or timed out.`, 502);
     }
   };
-  let searched = wantSearch;
-  let response = await once(searched);
-  // A model or account without web search access: answer without it rather than fail the run.
-  if (searched && (response.status === 400 || response.status === 404)) {
-    searched = false;
-    response = await once(false);
+  const attempt = async (): Promise<Completion> => {
+    let response = await once();
+    // A model or account without web search access: answer without it rather than fail the run.
+    if (searched && (response.status === 400 || response.status === 404)) {
+      searched = false;
+      response = await once();
+    }
+    for (let i = 0; i < 2 && RETRY.has(response.status) && !req.signal?.aborted; i++) {
+      await wait(2500 * (i + 1));
+      response = await once();
+    }
+    if (!response.ok) {
+      // Status only. Provider error bodies can echo the prompt, so they are never surfaced.
+      const hint =
+        response.status === 401 || response.status === 403
+          ? "Check the API key."
+          : response.status === 404
+            ? "Check the model name."
+            : response.status === 429
+              ? "Rate limit or quota reached."
+              : response.status === 402
+                ? "Out of credit with this provider."
+                : "Check model access and quota.";
+      fail(`${spec.short} returned HTTP ${response.status}. ${hint}`, 502);
+    }
+    const raw = await response.text();
+    if (raw.length > 4000000) fail("Provider response exceeded limit.", 502);
+    let data: any;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      fail("Provider returned invalid JSON.", 502);
+    }
+    if (data.error) fail(`${spec.short} reported an error. Check key, model and quota.`, 502);
+    const out = extract(spec, data);
+    out.text = (out.text || "").trim();
+    out.searched = searched || spec.search === "builtin";
+    return out;
+  };
+  let out = await attempt();
+  // A thinking model that spent the whole budget on reasoning: one more try with three times the room.
+  if (!out.text && out.truncated && budget < spec.maxOut && !req.signal?.aborted) {
+    budget = Math.min(budget * 3, spec.maxOut);
+    out = await attempt();
   }
-  for (let i = 0; i < 2 && RETRY.has(response.status) && !req.signal?.aborted; i++) {
-    await wait(2500 * (i + 1));
-    response = await once(searched);
-  }
-  if (!response.ok) {
-    // Status only. Provider error bodies can echo the prompt, so they are never surfaced.
-    const hint =
-      response.status === 401 || response.status === 403
-        ? "Check the API key."
-        : response.status === 404
-          ? "Check the model name."
-          : response.status === 429
-            ? "Rate limit or quota reached."
-            : response.status === 402
-              ? "Out of credit with this provider."
-              : "Check model access and quota.";
-    fail(`${spec.short} returned HTTP ${response.status}. ${hint}`, 502);
-  }
-  const raw = await response.text();
-  if (raw.length > 4000000) fail("Provider response exceeded limit.", 502);
-  let data: any;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    fail("Provider returned invalid JSON.", 502);
-  }
-  if (data.error) fail(`${spec.short} reported an error. Check key, model and quota.`, 502);
-  const out = extract(spec, data);
-  out.text = (out.text || "").trim();
-  out.searched = searched || spec.search === "builtin";
-  if (!out.text) fail(`${spec.short} returned no text.`, 502);
+  if (!out.text)
+    fail(
+      out.truncated
+        ? `${spec.short} (${req.model}) spent its whole output budget thinking and wrote no answer. Try again, or pick a non-reasoning model such as gpt-4.1.`
+        : `${spec.short} (${req.model}) returned an empty answer. Try again or pick another model.`,
+      502,
+    );
   if (out.sources?.length && !/\n(Sources|来源)[:：]/.test(out.text))
     out.text += `\n\nSources:\n${out.sources.map((u) => `- ${u}`).join("\n")}`;
   return out;
@@ -552,7 +576,8 @@ export async function complete(
 // One tiny request to confirm a key works before it is saved.
 export async function verify(c: { provider: ProviderId; model: string; key: string }, fetcher: Fetcher = fetch) {
   const r = await complete(
-    { ...c, system: "Reply with the single word OK.", prompt: "Say OK.", maxTokens: 16 },
+    // Reasoning models need room to think even for "OK"; complete() raises their budget automatically.
+    { ...c, system: "Reply with the single word OK.", prompt: "Say OK.", maxTokens: 64 },
     fetcher,
     async () => {},
   );

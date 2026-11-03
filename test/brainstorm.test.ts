@@ -316,3 +316,67 @@ test("utf8 fallback decodes ASCII, Chinese and emoji like TextDecoder", async ()
     (globalThis as any).TextDecoder = saved;
   }
 });
+
+test("reasoning models (gpt-5-mini, o4-mini, Gemini 2.5, Grok 4) get room to think; an empty think-only answer is retried", async () => {
+  const { complete, verify, isReasoningModel } = await import("../src/core/providers");
+  for (const m of ["gpt-5-mini", "gpt-5", "o4-mini", "gemini-2.5-pro", "grok-4", "deepseek-reasoner", "openai/gpt-5"])
+    assert.ok(isReasoningModel(m), m);
+  for (const m of ["gpt-4.1", "claude-sonnet-4-5", "deepseek-chat", "grok-3"]) assert.ok(!isReasoningModel(m), m);
+  // verify a gpt-5-mini key: first reply is all reasoning (incomplete, no text), the retry answers.
+  const bodies: any[] = [];
+  const f = (async (_u: string, i: any) => {
+    const b = JSON.parse(i.body);
+    bodies.push(b);
+    return bodies.length === 1
+      ? resp({ status: "incomplete", output: [{ type: "reasoning" }], usage: { input_tokens: 5, output_tokens: 4000 } })
+      : resp({ status: "completed", output_text: "OK", usage: { input_tokens: 5, output_tokens: 900 } });
+  }) as any;
+  const r = await verify({ provider: "openai", model: "gpt-5-mini", key: "k" }, f);
+  assert.equal(r.ok, true);
+  assert.deepEqual(bodies[0].reasoning, { effort: "low" });
+  assert.equal(bodies[0].max_output_tokens, 4000);
+  assert.equal(bodies[1].max_output_tokens, 12000);
+  // non-reasoning model keeps its small budget and no reasoning field
+  let b2: any;
+  await complete({ provider: "openai", model: "gpt-4.1", key: "k", system: "s", prompt: "p", maxTokens: 64 }, (async (
+    _u: string,
+    i: any,
+  ) => {
+    b2 = JSON.parse(i.body);
+    return resp({ output_text: "OK" });
+  }) as any);
+  assert.equal(b2.max_output_tokens, 64);
+  assert.equal(b2.reasoning, undefined);
+  // still empty after the retry: a clear message, not a mystery
+  await assert.rejects(
+    complete({ provider: "openai", model: "gpt-5-mini", key: "k", system: "s", prompt: "p" }, (async () =>
+      resp({ status: "incomplete", output: [] })) as any),
+    /spent its whole output budget thinking/,
+  );
+});
+
+test("a failing cross-checker does not stop the job: it continues with one reviewer and says so", async () => {
+  const job = newJob({
+    goal: "Spec",
+    mode: "live",
+    preset: "balanced",
+    assignments: { planner: "anthropic", worker: "anthropic", reviewer: "anthropic", verifier: "openai" },
+    minRounds: 1,
+    maxRounds: 2,
+  });
+  const f = (async (url: string, init: any) => {
+    if (url.includes("openai.com")) return resp({ status: "incomplete", output: [] });
+    const sys = JSON.stringify(JSON.parse(init.body).system);
+    const text = /REVIEWER/.test(sys)
+      ? `{"verdict":"pass","score":9,"summary":"ok","criteria":[{"id":"C1","met":true,"evidence":"Buyer: export managers"}],"issues":[]}`
+      : /PLANNER/.test(sys)
+        ? "C1. names the buyer"
+        : "Buyer: export managers. ".repeat(20);
+    return resp({ content: [{ type: "text", text }], stop_reason: "end_turn" });
+  }) as any;
+  await runJob(job, { ...quiet, credential: cred, fetcher: f });
+  assert.equal(job.status, "awaiting_review");
+  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(job.assignments.verifier, undefined);
+  assert.ok(job.events.some((e) => e.role === "check" && /Cross-checker unavailable/.test(e.text)));
+});
