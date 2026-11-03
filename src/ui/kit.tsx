@@ -171,7 +171,7 @@ export const k = StyleSheet.create({
   chipText: { fontSize: 14, fontWeight: "400", color: T.ink },
   dot: { width: 8, height: 8, borderRadius: 8 },
   input: {
-    backgroundColor: T.surface,
+    backgroundColor: T.white,
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,

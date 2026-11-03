@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0 — hotfix 3
+- Reasoning models (GPT-5, GPT-5 mini, o4-mini, Gemini 2.5, Grok 4, DeepSeek reasoner) no longer fail with "returned no text": they get room to think (at least 4,000 output tokens, low reasoning effort on OpenAI), and an answer that comes back empty after thinking is retried once with three times the budget. Connecting such a model works again.
+- If the cross-checker fails mid-job, the job continues with one reviewer and says so, instead of stopping after one round.
+- The connect form shows its key and model fields (they were the same grey as the form) and the "Paste copied key" button promised in hotfix 2 is really there now.
+
 ## 2.0.0 — hotfix (build after 22)
 - Fix launch crash on iOS: expo-print 58.0.8 required a newer ExpoModulesJSI than the app ships ("Symbol not found" at launch). All native modules are now pinned to exactly the versions this Expo SDK was tested with, and a test fails the build if any drifts.
 - Keychain-safe names for custom and OpenRouter agents (ids with ":" could not be saved).
