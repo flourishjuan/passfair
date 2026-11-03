@@ -8,12 +8,11 @@ Open source under the [Apache License 2.0](LICENSE). Passfair™ is a trademark 
 
 ## What it does
 
-1. **Connect** — one button per vendor (Claude, GPT, Gemini). Paste a key; it is checked with one tiny request and stored in the device keychain.
-2. **Send a brief** — the team is assigned automatically from a preset: Planner → Worker → (Polisher) → Reviewer + Cross-checker. With two vendors connected, Claude and GPT review every round independently; the team runs a fixed minimum number of rounds, stops when both approve, and keeps the best-reviewed version. Every draft and verdict appears as a message.
-3. **Cut in** — type while they work; the team stops and follows your new instruction.
-4. **Hand off** — pair your own Muse (Meta's agent) with a one-time code. Approved work goes to Muse to publish; publishing problems come back as feedback and the team fixes them. Until the Muse connector is approved by Meta, *Copy for Muse* gives you a paste-ready package.
-5. **Export** — PDF, Word, PowerPoint or Markdown from the share sheet; the app converts the text on-device, the agents never touch files.
-6. **Demo** — with nothing connected, Send runs a scripted demo so you can watch the loop for free.
+1. **Connect** — tap ••• (top left). Sign in once with OpenRouter (Claude, GPT, Grok, Gemini, DeepSeek, Llama — no key to copy), or connect Claude, GPT, Gemini, Grok, DeepSeek, Llama, Perplexity, Mistral, Qwen, Kimi, Groq directly, or add your own OpenAI/Anthropic-compatible agent.
+2. **Attach** — photos, videos, camera, files (text, CSV, Word, Excel, PowerPoint, PDF), web links or the clipboard. An agent that can see images / video describes them for the team.
+3. **Brainstorm** — the team frames the question, each agent proposes ideas through a different industry's lens, they debate each other by name, and a decision matrix picks the winner. Then they build and two reviewers from different vendors cross-check it against every requirement.
+4. **Cut in** any time; reply to revise; hand finished work to your Muse to publish.
+5. **Download** — PDF, Word, PowerPoint, Markdown or the full record, converted on the phone.
 
 ## Privacy, in one line
 

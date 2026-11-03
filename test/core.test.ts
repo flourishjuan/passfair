@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  numberedIssues,
+  roundReviews,
   bestRound,
   feedbackEvent,
   newJob,
@@ -31,10 +33,12 @@ test("demo loop: plan → draft → revise → pass, final deliverable set", asy
   });
   await runJob(job, deps(job));
   assert.equal(job.status, "awaiting_review");
-  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(job.outcome, "demo"); // a demo is never "approved"
   const roles = job.events.map((e) => e.role);
   assert.deepEqual(roles, ["planner", "worker", "polisher", "reviewer", "worker", "polisher", "reviewer"]);
-  assert.ok(job.final.includes("revised"));
+  assert.match(job.final, /post one thing you built/);
+  assert.doesNotMatch(job.final, /Point [AB]|TBD|REVISION NOTES/);
+  assert.ok(job.events.find((e) => e.role === "worker" && e.round === 2)?.notes);
   assert.equal(job.version, 1);
 });
 
@@ -68,7 +72,7 @@ test("muse problem re-opens a finished job and reviewer passes after fix", async
   assert.match(promptFor(job, "reviewer", 3), /FEEDBACK THAT HAD TO BE ADDRESSED/);
   assert.match(promptFor(job, "worker", 3), /FEEDBACK REPORTED FROM MUSE/);
   await runJob(job, deps(job));
-  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(job.outcome, "demo"); // a demo is never "approved"
   assert.match(job.final, /muse/);
 });
 
@@ -191,14 +195,16 @@ test("cross-check: two vendors review every round; pass needs both", async () =>
     "reviewer",
     "verifier",
   ]);
-  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(job.outcome, "demo"); // a demo is never "approved"
   assert.equal(job.finalRound, 2);
   assert.equal(job.rounds!.length, 2);
   assert.equal(job.rounds![0].passed, false);
   // The worker in round 2 saw issues from both seats.
   const p = promptFor(job, "worker", 2);
   assert.match(p, /ISSUES FROM BOTH REVIEWERS/);
-  assert.match(p, /cross-checker/);
+  const r1 = numberedIssues(roundReviews(job, 1));
+  assert.match(r1, /^I1 \[high\] reviewer:/m);
+  assert.match(r1, /cross-checker:/);
 });
 
 test("autoAssign: second reviewer is always a different vendor; none with one vendor", () => {
@@ -216,7 +222,14 @@ function scripted(verdicts: string[]) {
     const body = JSON.parse(init.body);
     const sys = JSON.stringify(body.system || body.messages?.[0] || "");
     const isReview = /REVIEWER/.test(sys);
-    const text = isReview ? verdicts.shift()! : /PLANNER/.test(sys) ? "plan" : `draft ${++n}`;
+    const prompt = JSON.stringify(body.messages || "");
+    const text = isReview
+      ? verdicts.shift()!
+      : /PLANNER/.test(sys)
+        ? "plan\nC1. covers the spec"
+        : /ISSUES FROM|FEEDBACK REPORTED|NEW INSTRUCTION/.test(prompt)
+          ? `draft ${++n}\n=== REVISION NOTES ===\nI1: fixed`
+          : `draft ${++n}`;
     return new Response(
       JSON.stringify({
         content: [{ type: "text", text }],
@@ -227,7 +240,8 @@ function scripted(verdicts: string[]) {
     );
   };
 }
-const PASS = (score: number) => `{"verdict":"pass","score":${score},"summary":"ok","issues":[]}`;
+const PASS = (score: number) =>
+  `{"verdict":"pass","score":${score},"summary":"ok","criteria":[{"id":"C1","met":true,"evidence":"draft text"}],"issues":[]}`;
 const REVISE = `{"verdict":"revise","score":5,"summary":"no","issues":[{"severity":"high","where":"x","problem":"p","fix":"f"}]}`;
 const live = (extra: object) =>
   newJob({
@@ -277,7 +291,7 @@ test("muse problem with cross-check: final comes from a round after the feedback
   await runJob(job, deps(job));
   reopenWithFeedback(job, "muse", "Title over 30 characters, rejected by the store.");
   await runJob(job, deps(job));
-  assert.equal(job.outcome, "approved_by_reviewer");
+  assert.equal(job.outcome, "demo"); // a demo is never "approved"
   assert.ok(job.finalRound! > 2);
   assert.match(job.final, /muse/);
 });

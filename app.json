@@ -2,7 +2,7 @@
   "expo": {
     "name": "Passfair",
     "slug": "passfair",
-    "version": "1.2.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "passfair",
@@ -19,7 +19,10 @@
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSFaceIDUsageDescription": "Passfair uses Face ID to protect your saved API keys."
+        "NSFaceIDUsageDescription": "Passfair uses Face ID to protect your saved API keys.",
+        "NSPhotoLibraryUsageDescription": "Choose photos and videos for your agents to look at.",
+        "NSCameraUsageDescription": "Take a photo or video for your agents to look at.",
+        "NSMicrophoneUsageDescription": "Record sound with a video you send to your agents."
       }
     },
     "android": {
@@ -31,7 +34,9 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "permissions": ["INTERNET"],
+      "permissions": [
+        "INTERNET"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -39,7 +44,20 @@
       "bundler": "metro",
       "output": "single"
     },
-    "plugins": ["expo-secure-store"],
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose photos and videos for your agents to look at.",
+          "cameraPermission": "Take a photo or video for your agents to look at.",
+          "microphonePermission": "Record sound with a video you send to your agents."
+        }
+      ],
+      "expo-document-picker",
+      "expo-web-browser",
+      "expo-iap"
+    ],
     "extra": {
       "eas": {
         "projectId": "e50b0df4-8eba-4101-b8f7-5a91178cc9db"
