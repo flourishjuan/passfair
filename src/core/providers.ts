@@ -1,3 +1,4 @@
+import { profileFor } from "./profiles";
 // Model provider adapters. Every agent — built-in or one the user adds — speaks one of four wire formats.
 // Calls go straight from the phone to the vendor the user chose; no proxy, no middleman.
 // Endpoints of built-in agents are fixed. A custom agent's endpoint is whatever HTTPS URL the user typed.
@@ -58,7 +59,7 @@ const BUILTIN: ProviderSpec[] = [
     docs: "https://platform.claude.com/settings/keys",
     color: "#D97757",
     search: "tool",
-    maxOut: 16000,
+    maxOut: 32000,
     media: ["image", "pdf"],
   },
   {
@@ -73,7 +74,7 @@ const BUILTIN: ProviderSpec[] = [
     docs: "https://platform.openai.com/api-keys",
     color: "#10A37F",
     search: "tool",
-    maxOut: 16000,
+    maxOut: 32000,
     media: ["image", "pdf"],
   },
   {
@@ -88,7 +89,7 @@ const BUILTIN: ProviderSpec[] = [
     docs: "https://aistudio.google.com/apikey",
     color: "#4285F4",
     search: "tool",
-    maxOut: 16000,
+    maxOut: 32000,
     media: ["image", "pdf", "video", "audio"],
   },
   {
@@ -116,7 +117,7 @@ const BUILTIN: ProviderSpec[] = [
     models: ["deepseek-chat", "deepseek-reasoner"],
     docs: "https://platform.deepseek.com/api_keys",
     color: "#4D6BFE",
-    maxOut: 8000,
+    maxOut: 16000,
   },
   {
     id: "meta",
@@ -179,8 +180,8 @@ const BUILTIN: ProviderSpec[] = [
     api: "openai-chat",
     url: "https://api.moonshot.ai/v1/chat/completions",
     keyHint: "sk-…",
-    defaultModel: "moonshot-v1-32k",
-    models: ["moonshot-v1-32k", "kimi-k2-0905-preview"],
+    defaultModel: "kimi-k2-0905-preview",
+    models: ["kimi-k2-0905-preview", "moonshot-v1-128k", "moonshot-v1-32k"],
     docs: "https://platform.moonshot.ai/console/api-keys",
     color: "#1E1E1E",
     maxOut: 8000,
@@ -209,7 +210,7 @@ const BUILTIN: ProviderSpec[] = [
     models: ["anthropic/claude-sonnet-4.5", "openai/gpt-4.1", "x-ai/grok-4", "google/gemini-2.5-pro"],
     docs: "https://openrouter.ai/keys",
     color: "#6467F2",
-    maxOut: 16000,
+    maxOut: 32000,
   },
 ];
 
@@ -374,7 +375,7 @@ function buildRequest(
       body: {
         model: r.model,
         instructions: r.system,
-        ...(isReasoningModel(r.model) ? { reasoning: { effort: "low" } } : {}),
+        ...(isReasoningModel(r.model, spec.id) ? { reasoning: { effort: "low" } } : {}),
         input: media.length
           ? [
               {
@@ -439,12 +440,8 @@ function buildRequest(
   };
 }
 
-// Models that think before answering (OpenAI GPT-5 / o-series, Gemini 2.5, Grok 4, DeepSeek reasoner).
-// Their hidden reasoning counts against the output limit, so a tiny limit leaves no room for the answer.
-export const isReasoningModel = (model: string) =>
-  /^(openai\/)?(gpt-5|o\d)/i.test(model) ||
-  /gemini-2\.5|gemini-3/i.test(model) ||
-  /grok-4|reasoner|thinking|sonar-reasoning/i.test(model);
+// Models that think before answering (GPT-5 / o-series, Gemini 2.5, Grok 4, DeepSeek reasoner …) — see profiles.ts.
+export const isReasoningModel = (model: string, provider = "") => profileFor(provider, model).thinks;
 const MIN_REASONING_BUDGET = 4000;
 
 const uniq = (xs: string[]) => Array.from(new Set(xs.filter((x) => /^https?:\/\//.test(x)))).slice(0, 12);
@@ -499,8 +496,10 @@ export async function complete(
 ): Promise<Completion> {
   const spec = getProvider(req.provider);
   if (!spec) return fail("Unknown agent. Connect it again from the ••• menu.");
+  const prof = profileFor(spec.id, req.model);
+  const cap = Math.min(prof.maxOut, spec.maxOut);
   const asked = req.maxTokens ?? 4000;
-  let budget = Math.min(isReasoningModel(req.model) ? Math.max(asked, MIN_REASONING_BUDGET) : asked, spec.maxOut);
+  let budget = Math.min(prof.thinks ? Math.max(asked, MIN_REASONING_BUDGET) : asked, cap);
   let searched = !!req.search && spec.search === "tool";
   const once = async () => {
     const built = buildRequest(spec, { ...req, maxTokens: budget, search: searched });
@@ -523,8 +522,10 @@ export async function complete(
       searched = false;
       response = await once();
     }
-    for (let i = 0; i < 2 && RETRY.has(response.status) && !req.signal?.aborted; i++) {
-      await wait(2500 * (i + 1));
+    for (let i = 0; i < 3 && RETRY.has(response.status) && !req.signal?.aborted; i++) {
+      // Respect the vendor's own "retry after" hint (rate limits), capped at 20 s.
+      const hinted = Number(response.headers?.get?.("retry-after"));
+      await wait(Number.isFinite(hinted) && hinted > 0 ? Math.min(hinted, 20) * 1000 : 2500 * (i + 1));
       response = await once();
     }
     if (!response.ok) {
@@ -557,8 +558,8 @@ export async function complete(
   };
   let out = await attempt();
   // A thinking model that spent the whole budget on reasoning: one more try with three times the room.
-  if (!out.text && out.truncated && budget < spec.maxOut && !req.signal?.aborted) {
-    budget = Math.min(budget * 3, spec.maxOut);
+  if (!out.text && out.truncated && budget < cap && !req.signal?.aborted) {
+    budget = Math.min(budget * 3, cap);
     out = await attempt();
   }
   if (!out.text)

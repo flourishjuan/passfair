@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { seatName } from "../core/brainstorm";
 import { detectKey } from "../core/oauth";
+import { profileFor } from "../core/profiles";
 import type { Job } from "../core/orchestrator";
 import { LIMITS, PRO_PITCH, type Tier } from "../core/plan";
 import {
@@ -117,6 +118,16 @@ function AgentForm({
           <Chip key={m} label={m} on={m === model} onPress={() => setModel(m)} />
         ))}
       </Row>
+      {(() => {
+        const pr = profileFor(spec.id, model.trim());
+        return (
+          <Text style={F.small}>
+            Can read about {Math.round(pr.context / 1000)}k tokens and write up to{" "}
+            {Math.round(Math.min(pr.maxOut, spec.maxOut) / 1000)}k per answer — Passfair sizes every step to fit.
+            {pr.note ? ` ${pr.note}` : ""}
+          </Text>
+        );
+      })()}
       {!!err && <Text style={[F.small, { color: T.danger }]}>{err}</Text>}
       <Row>
         <Btn
