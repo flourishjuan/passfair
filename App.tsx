@@ -1,15 +1,12 @@
-// Passfair — your AI agents, finally talking to each other. Chat-first, one screen.
 import * as Clipboard from "expo-clipboard";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  type ScrollViewInstance,
   Share,
   StyleSheet,
   Text,
@@ -17,24 +14,23 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import type { Attachment } from "./src/core/material";
 import { lastDeliverable } from "./src/core/orchestrator";
-import type { ProviderId } from "./src/core/providers";
-import {
-  Btn,
-  Bubble,
-  ConnectBar,
-  ConnectPanel,
-  LiveToggle,
-  MusePanel,
-  Pill,
-  TeamSheet,
-  Typing,
-  s,
-} from "./src/ui/components";
-import { T } from "./src/ui/theme";
+import { LIMITS } from "./src/core/plan";
+import { shortName } from "./src/core/providers";
+import { settings as settingsStore } from "./src/store/storage";
+import { fromClipboard, fromLink, pickFiles, pickMedia } from "./src/ui/attach";
+import { type ExportChoice, exportJob, exportLabel, exportOrder } from "./src/ui/exportFile";
+import { Feed, RunFacts, Working } from "./src/ui/feed";
+import { Btn, Chip, Row } from "./src/ui/kit";
+import { Logo } from "./src/ui/Logo";
+import { Markdown } from "./src/ui/markdown";
+import { usePro } from "./src/ui/purchases";
+import { HistorySheet, MenuSheet, Paywall, Reader, TeamSheet, WorkSheet } from "./src/ui/sheets";
+import { F, T, vendorColor } from "./src/ui/theme";
 import { useStudio } from "./src/ui/useStudio";
-import { type ExportFormat, exportJob, exportOrder } from "./src/ui/exportFile";
-import { formats } from "./src/core/export";
+
+type ScrollViewInstance = React.ComponentRef<typeof ScrollView>;
 
 const confirm = (title: string, message: string, ok: () => void) => {
   if (Platform.OS === "web") {
@@ -48,6 +44,12 @@ const confirm = (title: string, message: string, ok: () => void) => {
   ]);
 };
 
+const STARTERS = [
+  "Find the one service my business should sell first — who buys, price, how to get the first customer with no ad budget.",
+  "Pressure-test my pricing: here is what I charge and why. What would you change?",
+  "Plan a product launch for next month with zero ad spend. Borrow ideas from other industries.",
+];
+
 export default function App() {
   const [toastMsg, setToastMsg] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -56,36 +58,81 @@ export default function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastMsg(""), 5000);
   }, []);
-  const st = useStudio(toast);
-  const [openPanel, setOpenPanel] = useState<string | null>(null);
-  const [team, setTeam] = useState(false);
+  const [proCached, setProCached] = useState<boolean | null>(null);
+  useEffect(() => {
+    settingsStore.load().then((s) => setProCached(!!s.pro?.active));
+  }, []);
+  if (proCached === null) return null;
+  return <Main toast={toast} toastMsg={toastMsg} proCached={proCached} />;
+}
+
+function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toastMsg: string; proCached: boolean }) {
+  const saveProRef = useRef<(a: boolean) => void>(() => {});
+  const pro = usePro(
+    proCached,
+    useCallback((a: boolean) => saveProRef.current(a), []),
+  );
+  const st = useStudio(toast, pro.tier);
+  saveProRef.current = (active) => st.saveSettings({ pro: { active, checked: new Date().toISOString() } });
+
+  const [sheet, setSheet] = useState<null | "menu" | "team" | "pro" | "history" | "work" | "reader">(null);
   const [text, setText] = useState("");
-  const [live, setLive] = useState(false);
-  const [history, setHistory] = useState(false);
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [linkMode, setLinkMode] = useState(false);
+  const [link, setLink] = useState("");
+  const [exportOpen, setExportOpen] = useState(false);
   const scroll = useRef<ScrollViewInstance>(null);
   const job = st.job;
   const running = !!st.runningId && st.runningId === job?.id;
   const finished =
     !!job && ["awaiting_review", "accepted", "delivered", "published", "stopped", "failed"].includes(job.status);
-  const musePaired = st.settings.relay_paired === "1";
   const mode: "send" | "cutin" | "reply" = running ? "cutin" : job && finished ? "reply" : "send";
+  const L = LIMITS[pro.tier];
+  const flow = st.settings.flow || "brainstorm";
+  const noAgents = !st.connections.length;
 
   useEffect(() => {
-    if (st.connections.length) setLive(true);
-  }, [st.connections.length]);
-  useEffect(() => {
-    scroll.current?.scrollToEnd({ animated: true });
+    if (running) scroll.current?.scrollToEnd({ animated: true });
   }, [job?.events.length, running]);
+
+  const add = async (fn: () => Promise<Attachment[] | Attachment | null>) => {
+    setAttachOpen(false);
+    try {
+      const got = await fn();
+      const list = (Array.isArray(got) ? got : got ? [got] : []).filter((a) => {
+        if (a.kind === "unsupported") {
+          toast(`${a.name}: this file type can't be read yet. Use text, Office, PDF, images or video.`);
+          return false;
+        }
+        return true;
+      });
+      setFiles((f) => [...f, ...list]);
+    } catch (e: any) {
+      toast(e?.message || "Could not add that.");
+    }
+  };
+  const proLock = (a: Attachment) =>
+    (a.kind === "pdf" && !L.pdf) ||
+    ((a.kind === "video" || a.kind === "audio") && !L.video) ||
+    (a.kind === "office" && !L.office);
 
   const submit = async () => {
     const t = text.trim();
     if (!t) return;
+    if (mode === "send" && files.some(proLock)) {
+      setSheet("pro");
+      return;
+    }
     setText("");
+    const sending = files;
+    if (mode === "send") setFiles([]);
     try {
       if (mode === "cutin") await st.cutIn(t);
       else if (mode === "reply" && job) await st.feedback(job.id, t, "manual");
-      else await st.start(t, { live });
+      else await st.start(t, { files: sending });
     } catch (e: any) {
+      if (mode === "send") setFiles(sending);
       toast(e?.message || "Failed.");
     }
   };
@@ -99,315 +146,446 @@ export default function App() {
       toast("Copied. Paste into Muse; if publishing fails, paste the error back here as a reply.");
     } else toast((r as any).error || "Nothing to hand off yet.");
   };
-  const [exportOpen, setExportOpen] = useState(false);
-  const exportAs = async (format: ExportFormat) => {
+  const exportAs = async (c: ExportChoice) => {
     if (!job) return;
+    if (!L.exports.includes(c)) return setSheet("pro");
     setExportOpen(false);
     try {
-      await exportJob(job, format);
+      await exportJob(job, c);
     } catch (e: any) {
       toast(e?.message || "Export failed.");
     }
   };
-  const share = async () => {
-    if (!job) return;
-    const body = job.final || lastDeliverable(job);
-    try {
-      await Share.share({ message: body, title: job.goal.slice(0, 60) });
-    } catch {}
-  };
+
+  const panelLabel = st.panel.length ? st.panel.map(shortName).join(" · ") : "No agents";
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
         <StatusBar style="dark" />
-        <View style={styles.notice}>
-          <Text style={styles.noticeText}>
-            RUNS ON YOUR PHONE · KEYS STAY IN YOUR KEYCHAIN · ONLY WHAT YOU HAND OFF TRAVELS
-          </Text>
-        </View>
         <View style={styles.header}>
-          <Image source={require("./assets/splash-icon.png")} style={{ width: 34, height: 34 }} />
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.brand} numberOfLines={1}>
-              Passfair
-            </Text>
-            <Text style={styles.brandSub} numberOfLines={1}>
-              BY AGENTS FAIR
-            </Text>
-          </View>
-          <Btn label="History" small onPress={() => setHistory(!history)} />
-          <Btn label="Team" small onPress={() => setTeam(true)} />
-          <Pill
-            text={
-              running
-                ? "RUNNING"
-                : job
-                  ? job.status === "awaiting_review"
-                    ? "DONE"
-                    : job.status.toUpperCase()
-                  : st.connections.length
-                    ? "READY"
-                    : "DEMO"
-            }
-            tone={running ? "lime" : "lilac"}
-          />
-        </View>
-
-        <ConnectBar
-          connections={st.connections}
-          open={openPanel}
-          onToggle={(id) => setOpenPanel(openPanel === id ? null : id)}
-          musePaired={musePaired}
-          museConfigured={!!st.settings.relay_token}
-        />
-        {openPanel && openPanel !== "muse" && (
-          <ConnectPanel
-            provider={openPanel as ProviderId}
-            connection={st.connections.find((c) => c.provider === openPanel)}
-            onConnect={(m, k) =>
-              st
-                .connect(openPanel as ProviderId, m, k)
-                .then(() =>
-                  toast(
-                    `${openPanel === "anthropic" ? "Claude" : openPanel === "openai" ? "GPT" : "Gemini"} connected.`,
-                  ),
-                )
-            }
-            onDisconnect={() => st.disconnect(openPanel as ProviderId)}
-            onClose={() => setOpenPanel(null)}
-          />
-        )}
-        {openPanel === "muse" && (
-          <MusePanel
-            settings={st.settings}
-            onPair={() => st.relay.pair()}
-            onCheck={async () => {
-              const r = await st.relay.status();
-              toast(r.paired ? "Muse is paired." : "Still waiting for Muse to enter the code.");
-            }}
-            onUnpair={() => st.relay.unpair()}
-            onClose={() => setOpenPanel(null)}
-          />
-        )}
-
-        {history && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ flexGrow: 0 }}
-            contentContainerStyle={styles.history}
+          <Pressable
+            onPress={() => setSheet("menu")}
+            hitSlop={12}
+            style={styles.headBtn}
+            accessibilityLabel="Agents and settings"
           >
-            <Pressable
-              onPress={() => {
-                st.setJobId(null);
-                setHistory(false);
-              }}
-              style={[s.chip, !job && s.chipOn]}
-            >
-              <Text style={[s.chipText, !job && { color: T.white }]}>+ New</Text>
+            <Text style={styles.dots}>•••</Text>
+          </Pressable>
+          <Logo busy={running} onPress={() => setSheet("work")} />
+          <View style={[styles.headBtn, { flexDirection: "row", justifyContent: "flex-end", gap: 16 }]}>
+            <Pressable onPress={() => setSheet("history")} hitSlop={10} accessibilityLabel="History">
+              <Text style={styles.icon}>◷</Text>
             </Pressable>
-            {st.jobs.map((j) => (
-              <Pressable
-                key={j.id}
-                onPress={() => {
-                  st.setJobId(j.id);
-                  setHistory(false);
-                }}
-                style={[s.chip, job?.id === j.id && s.chipOn]}
-              >
-                <Text numberOfLines={1} style={[s.chipText, { maxWidth: 180 }, job?.id === j.id && { color: T.white }]}>
-                  {j.origin?.source === "muse" ? "Muse · " : ""}
-                  {j.goal.slice(0, 40)}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        )}
+            <Pressable onPress={() => st.setJobId(null)} hitSlop={10} accessibilityLabel="New brief">
+              <Text style={styles.icon}>＋</Text>
+            </Pressable>
+          </View>
+        </View>
 
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-          <ScrollView ref={scroll} style={styles.chat} contentContainerStyle={styles.chatInner}>
+          <ScrollView
+            ref={scroll}
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.feed}
+            keyboardShouldPersistTaps="handled"
+          >
             {!job ? (
-              <View style={styles.empty}>
-                <Text style={styles.h1}>Tell the team what you need.</Text>
-                <Text style={s.fine}>
-                  Connect your agents above, then type a brief below. Claude plans and drafts, GPT polishes, Claude
-                  reviews — they talk to each other here. Cut in whenever you like.
+              <View style={{ gap: 22, paddingTop: 24 }}>
+                <Text style={F.display}>What should your agents figure out together?</Text>
+                <Text style={[F.body, { color: T.sub }]}>
+                  Each agent attacks the problem through a different industry, they debate each other, then decide,
+                  build and cross-check the result. You watch it all happen.
                 </Text>
+                {noAgents && (
+                  <Pressable onPress={() => setSheet("menu")} style={styles.card}>
+                    <Text style={F.head}>Connect your agents</Text>
+                    <Text style={F.small}>
+                      Sign in once with OpenRouter for Claude, GPT, Grok, Gemini and more — or add each vendor's key.
+                      Tap here or ••• at the top left.
+                    </Text>
+                  </Pressable>
+                )}
+                <View style={{ gap: 10 }}>
+                  {STARTERS.map((t) => (
+                    <Pressable key={t} onPress={() => setText(t)} style={styles.card}>
+                      <Text style={F.body}>{t}</Text>
+                    </Pressable>
+                  ))}
+                </View>
                 <Btn
-                  label="Watch a 20-second demo →"
+                  label="Watch a 30-second sample brainstorm"
                   kind="lime"
-                  onPress={() =>
-                    st.start(
-                      "Write a short, friendly welcome message for new members of a community of AI builders. Include one practical tip for their first week.",
-                      { live: false },
-                    )
-                  }
+                  onPress={() => st.start("", { demo: true }).catch((e: any) => toast(e?.message || "Failed."))}
                 />
               </View>
             ) : (
-              <>
-                <View style={[s.msg, s.msgMine]}>
-                  <View style={[s.avatar, { backgroundColor: T.ink }]}>
-                    <Text style={s.avatarText}>{job.origin?.source === "muse" ? "M" : "YOU"}</Text>
-                  </View>
-                  <View style={[s.bubble, s.bubbleMine]}>
-                    <Text style={[s.who, { color: "#D9D4EF" }]}>
-                      {job.origin?.source === "muse" ? "Muse (on your behalf)" : "You"} ·{" "}
-                      {new Date(job.created).toLocaleString()}
+              <View style={{ gap: 26 }}>
+                <View style={styles.brief}>
+                  <Text style={[F.body, { color: T.white }]}>{job.goal}</Text>
+                  {!!job.attachments?.length && (
+                    <Text style={[F.small, { color: "#C9C6D6" }]}>
+                      📎 {job.attachments.map((a) => a.name).join(", ")}
                     </Text>
-                    <Text style={[s.body, { color: T.white }]}>{job.goal}</Text>
-                  </View>
+                  )}
                 </View>
-                {job.events.map((e, i) => (
-                  <Bubble key={i} e={e} />
-                ))}
-                {running && <Typing job={job} />}
-                {job.status === "failed" && <Text style={s.err}>{job.error}</Text>}
-                {finished && (job.status as string) !== "failed" && (
+                <Feed job={job} />
+                {running && <Working job={job} />}
+                {job.status === "failed" && (
+                  <View style={{ gap: 10 }}>
+                    <Text style={[F.body, { color: T.danger }]}>{job.error}</Text>
+                    <Row>
+                      <Btn label="Try again" kind="primary" small onPress={() => st.resume(job)} />
+                      <Btn label="Agents" small onPress={() => setSheet("menu")} />
+                    </Row>
+                  </View>
+                )}
+                {finished && job.status !== "failed" && (
                   <View style={styles.final}>
-                    <Text style={s.who}>
-                      {job.status === "published"
-                        ? "Published by Muse"
-                        : job.status === "delivered"
-                          ? "Handed off to Muse — waiting for publish"
-                          : job.outcome === "approved_by_reviewer"
-                            ? job.assignments.verifier
-                              ? `Final · approved by both reviewers${job.finalRound ? ` (round ${job.finalRound})` : ""}`
-                              : "Final · reviewer approved"
-                            : job.outcome === "round_limit_reached"
-                              ? `Final · not approved by both, best round ${job.finalRound ?? "?"} — read critically`
-                              : "Stopped"}{" "}
-                      · v{job.version || 0}
+                    <Text style={F.label}>
+                      {(job.mode === "demo"
+                        ? "Sample — no AI was called, nothing was really reviewed"
+                        : job.status === "published"
+                          ? "Published by Muse"
+                          : job.status === "delivered"
+                            ? "Handed off to Muse — waiting for publish"
+                            : job.outcome === "approved_by_reviewer"
+                              ? `Final · approved by ${job.assignments.verifier ? "both reviewers" : "the reviewer"}${job.finalRound ? ` (round ${job.finalRound})` : ""}`
+                              : job.outcome === "round_limit_reached"
+                                ? `Final · not approved by both — best round ${job.finalRound ?? "?"}, read critically`
+                                : "Stopped"
+                      ).toUpperCase()}
                     </Text>
-                    <View style={s.row}>
-                      {job.status === "awaiting_review" && (
-                        <Btn label="Accept" small kind="primary" onPress={() => st.accept(job.id)} />
-                      )}
-                      {(job.status === "stopped" || job.status === "failed") && (
-                        <Btn label="Resume" small kind="primary" onPress={() => st.resume(job)} />
-                      )}
-                      <Btn label={musePaired ? "Hand off to Muse" : "Copy for Muse"} small onPress={copyForMuse} />
-                      <Btn
-                        label={exportOpen ? "Export ▴" : "Export ▾"}
-                        small
-                        onPress={() => setExportOpen(!exportOpen)}
-                      />
-                      <Btn label="Share" small onPress={share} />
-                      <Btn
-                        label="Delete"
-                        small
-                        kind="danger"
-                        onPress={() =>
-                          confirm("Delete this conversation?", "Drafts and reviews are removed from this phone.", () =>
-                            st.remove(job.id),
-                          )
-                        }
-                      />
-                    </View>
-                    {exportOpen && (
-                      <View style={s.row}>
-                        {exportOrder.map((f) => (
-                          <Btn key={f} label={formats[f].label} small onPress={() => exportAs(f)} />
-                        ))}
-                        <Text style={s.fine}>Converted on this phone. No AI call, nothing uploaded.</Text>
-                      </View>
+                    {(job.final || lastDeliverable(job)) && <Markdown text={job.final || lastDeliverable(job)} />}
+                    {job.mode === "live" && <RunFacts job={job} />}
+                    {job.mode === "demo" ? (
+                      <Text style={F.small}>
+                        Connect your agents (••• top left) and send your own brief to run this for real.
+                      </Text>
+                    ) : (
+                      <>
+                        <Row>
+                          {job.status === "awaiting_review" && (
+                            <Btn label="Accept" kind="primary" small onPress={() => st.accept(job.id)} />
+                          )}
+                          {job.status === "stopped" && (
+                            <Btn label="Resume" kind="primary" small onPress={() => st.resume(job)} />
+                          )}
+                          <Btn label="Read full screen" small onPress={() => setSheet("reader")} />
+                          <Btn
+                            label={exportOpen ? "Download ▴" : "Download ▾"}
+                            small
+                            onPress={() => setExportOpen(!exportOpen)}
+                          />
+                          <Btn
+                            label={st.settings.relay_paired === "1" ? "Hand to Muse" : "Copy for Muse"}
+                            small
+                            onPress={copyForMuse}
+                          />
+                          <Btn
+                            label="Share"
+                            small
+                            onPress={() =>
+                              Share.share({
+                                message: job.final || lastDeliverable(job),
+                                title: job.goal.slice(0, 60),
+                              }).catch(() => {})
+                            }
+                          />
+                          <Btn
+                            label="Delete"
+                            small
+                            kind="plain"
+                            onPress={() =>
+                              confirm(
+                                "Delete this conversation?",
+                                "Drafts and reviews are removed from this phone.",
+                                () => st.remove(job.id),
+                              )
+                            }
+                          />
+                        </Row>
+                        {exportOpen && (
+                          <Row>
+                            {exportOrder.map((c) => (
+                              <Chip
+                                key={c}
+                                label={exportLabel[c]}
+                                locked={!L.exports.includes(c)}
+                                onPress={() => exportAs(c)}
+                              />
+                            ))}
+                          </Row>
+                        )}
+                      </>
                     )}
                   </View>
                 )}
-              </>
+              </View>
             )}
           </ScrollView>
 
+          {!!toastMsg && <Text style={styles.toast}>{toastMsg}</Text>}
+
           <View style={styles.composer}>
-            <Text style={s.fine}>
-              {mode === "cutin"
-                ? "Cut in: type a new instruction and press Cut in — the team stops and follows it. Or just Stop."
-                : mode === "reply"
-                  ? "Reply to revise this result (paste a Muse error here too), or start a new brief from History."
-                  : job?.mode === "demo"
-                    ? ""
-                    : ""}
-            </Text>
-            <TextInput
-              value={text}
-              onChangeText={setText}
-              multiline
-              placeholder={
-                mode === "send"
-                  ? "Describe what the team should produce…"
-                  : mode === "cutin"
-                    ? "New instruction…"
-                    : "What should change?"
-              }
-              style={[s.input, { minHeight: 64, maxHeight: 140 }]}
-            />
-            {mode === "send" && (
-              <LiveToggle
-                value={live && st.connections.length > 0}
-                onChange={setLive}
-                disabled={!st.connections.length}
-              />
+            {files.length > 0 && mode === "send" && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {files.map((a) => (
+                  <Pressable
+                    key={a.id}
+                    onPress={() => setFiles((f) => f.filter((x) => x.id !== a.id))}
+                    style={styles.file}
+                  >
+                    <Text style={[F.small, { color: T.ink }]} numberOfLines={1}>
+                      {proLock(a) ? "🔒 " : ""}
+                      {
+                        {
+                          image: "🖼",
+                          video: "🎬",
+                          audio: "🎙",
+                          pdf: "📄",
+                          office: "📊",
+                          link: "🔗",
+                          text: "📝",
+                          unsupported: "?",
+                        }[a.kind]
+                      }{" "}
+                      {a.name}
+                    </Text>
+                    <Text style={[F.small, { color: T.faint }]}> ✕</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
             )}
-            <View style={[s.row, { justifyContent: "flex-end", alignItems: "center" }]}>
-              {running && <Btn label="Stop" small kind="danger" onPress={st.stop} />}
-              {mode === "reply" && <Btn label="New brief" small onPress={() => st.setJobId(null)} />}
-              <Btn
-                label={mode === "send" ? "Send →" : mode === "cutin" ? "Cut in →" : "Reply →"}
-                kind="primary"
-                onPress={submit}
-                disabled={!text.trim()}
+            {attachOpen && (
+              <Row>
+                <Chip label="🖼 Photos & videos" onPress={() => add(() => pickMedia(false))} />
+                <Chip label="📷 Camera" onPress={() => add(() => pickMedia(true))} />
+                <Chip label="📁 Files" onPress={() => add(pickFiles)} />
+                <Chip
+                  label="🔗 Link"
+                  onPress={() => {
+                    setAttachOpen(false);
+                    setLinkMode(true);
+                  }}
+                />
+                <Chip label="📋 Paste" onPress={() => add(fromClipboard)} />
+              </Row>
+            )}
+            {linkMode && (
+              <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+                <TextInput
+                  value={link}
+                  onChangeText={setLink}
+                  placeholder="https://…"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholderTextColor={T.faint}
+                  style={[styles.input, { flex: 1, minHeight: 0 }]}
+                />
+                <Btn
+                  label="Add"
+                  small
+                  kind="primary"
+                  onPress={() => {
+                    const u = link;
+                    setLink("");
+                    setLinkMode(false);
+                    add(() => fromLink(u));
+                  }}
+                />
+                <Btn label="✕" small kind="plain" onPress={() => setLinkMode(false)} />
+              </View>
+            )}
+            {mode === "send" && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                <Chip label="＋" on={attachOpen} onPress={() => setAttachOpen(!attachOpen)} />
+                <Chip
+                  label={flow === "brainstorm" ? "✦ Brainstorm" : "Build"}
+                  onPress={() => st.saveSettings({ flow: flow === "brainstorm" ? "build" : "brainstorm" })}
+                />
+                <Chip
+                  label={noAgents ? "Connect agents" : panelLabel}
+                  color={noAgents ? undefined : vendorColor(st.panel[0] || "demo")}
+                  onPress={() => setSheet(noAgents ? "menu" : "team")}
+                />
+                {pro.tier === "free" && <Chip label="Pro" onPress={() => setSheet("pro")} />}
+              </ScrollView>
+            )}
+            <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
+              <TextInput
+                value={text}
+                onChangeText={setText}
+                multiline
+                placeholderTextColor={T.faint}
+                placeholder={
+                  mode === "send"
+                    ? noAgents
+                      ? "Connect an agent first (••• top left)"
+                      : "Ask your agents…"
+                    : mode === "cutin"
+                      ? "Cut in — the team stops and follows you"
+                      : job?.mode === "demo"
+                        ? "Sample finished — tap ＋ at the top right for your own brief"
+                        : "Reply to revise (paste a Muse error too)"
+                }
+                style={[styles.input, { flex: 1 }]}
               />
+              {running && (
+                <Pressable
+                  onPress={st.stop}
+                  style={[styles.send, { backgroundColor: T.dangerSoft }]}
+                  accessibilityLabel="Stop"
+                >
+                  <Text style={{ color: T.danger, fontSize: 16, fontWeight: "700" }}>■</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={submit}
+                disabled={!text.trim() || (mode === "send" && noAgents) || (mode === "reply" && job?.mode === "demo")}
+                style={({ pressed }) => [
+                  styles.send,
+                  { opacity: !text.trim() || (mode === "send" && noAgents) ? 0.3 : pressed ? 0.7 : 1 },
+                ]}
+                accessibilityLabel={mode === "send" ? "Send" : mode === "cutin" ? "Cut in" : "Reply"}
+              >
+                <Text style={{ color: T.white, fontSize: 20, fontWeight: "700" }}>↑</Text>
+              </Pressable>
             </View>
           </View>
         </KeyboardAvoidingView>
 
+        <MenuSheet
+          visible={sheet === "menu"}
+          onClose={() => setSheet(null)}
+          tier={pro.tier}
+          connections={st.connections}
+          settings={st.settings}
+          onConnect={st.connect}
+          onDisconnect={st.disconnect}
+          onModel={st.setModel}
+          onAddCustom={st.addCustom}
+          onRemoveCustom={st.removeCustom}
+          onSignIn={st.signInOpenRouter}
+          onPro={() => setSheet("pro")}
+          onRestore={pro.restore}
+          onManage={pro.manage}
+          muse={{
+            pair: () => st.relay.pair(),
+            check: async () => {
+              const r = await st.relay.status();
+              toast(r.paired ? "Muse is paired." : "Not paired yet — enter the code in Muse.");
+            },
+            unpair: () => st.relay.unpair(),
+          }}
+        />
         <TeamSheet
-          visible={team}
+          visible={sheet === "team"}
+          onClose={() => setSheet(null)}
+          tier={pro.tier}
+          connections={st.connections}
+          panel={st.panel}
           settings={st.settings}
           onChange={(p) => st.saveSettings(p)}
-          onClose={() => setTeam(false)}
+          onPro={() => setSheet("pro")}
         />
-        {!!toastMsg && (
-          <View style={styles.toast}>
-            <Text style={{ color: T.white, fontWeight: "600" }}>{toastMsg}</Text>
-          </View>
-        )}
+        <Paywall
+          visible={sheet === "pro"}
+          onClose={() => setSheet(null)}
+          products={pro.products}
+          busy={pro.busy}
+          note={pro.note}
+          onBuy={pro.buy}
+          onRestore={pro.restore}
+        />
+        <HistorySheet
+          visible={sheet === "history"}
+          onClose={() => setSheet(null)}
+          jobs={st.jobs}
+          onOpen={(id) => {
+            st.setJobId(id);
+            setSheet(null);
+          }}
+        />
+        <WorkSheet visible={sheet === "work"} onClose={() => setSheet(null)} job={job} running={running} />
+        <Reader
+          visible={sheet === "reader"}
+          onClose={() => setSheet(null)}
+          title={job?.goal.slice(0, 80) || ""}
+          text={job ? job.final || lastDeliverable(job) : ""}
+        />
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: T.white },
-  notice: { backgroundColor: T.lime, paddingVertical: 6, paddingHorizontal: 12 },
-  noticeText: { fontSize: 10, fontWeight: "800", letterSpacing: 1, color: T.ink, textAlign: "center" },
+  root: { flex: 1, backgroundColor: T.bg },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: T.line,
-  },
-  brand: { fontSize: 16, fontWeight: "800", color: T.ink, lineHeight: 18 },
-  brandSub: { fontSize: 9, fontWeight: "700", letterSpacing: 2, color: T.purple },
-  history: { flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingBottom: 8 },
-  chat: { flex: 1, backgroundColor: "#FBFAFF" },
-  chatInner: { padding: 12, gap: 12, paddingBottom: 24 },
-  empty: { marginTop: 40, gap: 14, alignItems: "flex-start", paddingHorizontal: 8 },
-  h1: { fontSize: 28, fontWeight: "800", color: T.ink, lineHeight: 32 },
-  final: { borderWidth: 2, borderColor: T.ink, borderRadius: 14, padding: 12, gap: 10, backgroundColor: T.white },
-  composer: { borderTopWidth: 1, borderTopColor: T.line, padding: 12, gap: 8, backgroundColor: T.white },
-  toast: {
-    position: "absolute",
-    bottom: 24,
-    alignSelf: "center",
-    backgroundColor: T.ink,
+    justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    maxWidth: "90%",
+    paddingVertical: 4,
+  },
+  headBtn: { width: 76, height: 44, justifyContent: "center" },
+  dots: { fontSize: 18, letterSpacing: 1, color: T.ink, fontWeight: "700" },
+  icon: { fontSize: 22, color: T.ink },
+  feed: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 28 },
+  card: { backgroundColor: T.surface, borderRadius: T.radius, padding: 16, gap: 4 },
+  brief: {
+    alignSelf: "flex-end",
+    maxWidth: "92%",
+    backgroundColor: T.ink,
+    borderRadius: 22,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  final: { gap: 14, paddingTop: 4 },
+  composer: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === "ios" ? 26 : 12,
+    gap: 8,
+    backgroundColor: T.bg,
+  },
+  input: {
+    backgroundColor: T.surface,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    fontSize: 16,
+    color: T.ink,
+    minHeight: 46,
+    maxHeight: 130,
+  },
+  send: {
+    width: 46,
+    height: 46,
+    borderRadius: 46,
+    backgroundColor: T.ink,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  file: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: T.surface,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    maxWidth: 240,
+  },
+  toast: {
+    marginHorizontal: 16,
+    marginBottom: 4,
+    backgroundColor: T.ink,
+    color: T.white,
+    borderRadius: 16,
+    padding: 12,
+    fontSize: 14,
+    overflow: "hidden",
   },
 });

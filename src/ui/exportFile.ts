@@ -8,7 +8,40 @@ import { type ExportFormat, formats, toDocx, toHtml, toPptx } from "../core/expo
 import { type Job, lastDeliverable } from "../core/orchestrator";
 
 export type { ExportFormat };
-export const exportOrder: ExportFormat[] = ["pdf", "docx", "pptx", "md"];
+export type ExportChoice = ExportFormat | "record";
+export const exportOrder: ExportChoice[] = ["pdf", "docx", "pptx", "md", "record"];
+export const exportLabel: Record<ExportChoice, string> = {
+  pdf: "PDF",
+  docx: "Word",
+  pptx: "PowerPoint",
+  md: "Markdown",
+  record: "Full record",
+};
+
+// The whole conversation — frame, every idea, the debate, decision, drafts and reviews — as one Markdown file.
+export function recordOf(job: Job): string {
+  const lines = [
+    `# ${job.goal}`,
+    "",
+    `Passfair · ${new Date(job.created).toLocaleString()} · ${job.flow || "build"}`,
+    "",
+  ];
+  for (const e of job.events) {
+    const head = [
+      e.stage || e.role,
+      e.round ? `round ${e.round}` : "",
+      e.provider,
+      e.model,
+      e.lens ? `lens: ${e.lens}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    lines.push(`## ${head}`, "", e.review ? "```json\n" + JSON.stringify(e.review, null, 2) + "\n```" : e.text, "");
+    if (e.notes) lines.push("**What changed:**", "", e.notes, "");
+  }
+  lines.push("## Final", "", job.final || lastDeliverable(job));
+  return lines.join("\n");
+}
 
 export function exportMeta(job: Job) {
   const approved = job.outcome === "approved_by_reviewer";
@@ -20,10 +53,15 @@ export function exportMeta(job: Job) {
   };
 }
 
-export async function exportJob(job: Job, format: ExportFormat): Promise<void> {
-  const text = job.final || lastDeliverable(job);
+export async function exportJob(job: Job, choice: ExportChoice): Promise<void> {
+  if (job.mode === "demo") throw new Error("The demo is a scripted sample, not your work — nothing to export.");
+  const format: ExportFormat = choice === "record" ? "md" : choice;
+  const text = choice === "record" ? recordOf(job) : job.final || lastDeliverable(job);
   if (!text) throw new Error("Nothing to export yet.");
-  const meta = exportMeta(job);
+  const meta = {
+    ...exportMeta(job),
+    ...(choice === "record" ? { filename: `${exportMeta(job).filename}-record` } : {}),
+  };
   const f = formats[format];
   const name = `${meta.filename}.${f.ext}`;
 

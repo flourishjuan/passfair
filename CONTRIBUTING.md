@@ -5,7 +5,7 @@ Thanks for helping. A few ground rules keep Passfair safe to ship to app stores:
 1. **Core stays pure.** `src/core/*` must not import React, React Native or storage. It is tested with `node --test` and has no network in tests.
 2. **Keys never leave the keychain.** Do not log, persist or transmit API keys anywhere except the vendor's own endpoint.
 3. **Provider error bodies are never shown.** They can echo the prompt. Surface the HTTP status and a hint only.
-4. **Fixed endpoints.** No user-configurable base URLs for model providers.
+4. **Fixed endpoints for built-in agents.** Built-in agents call only their vendor's documented endpoint. The one exception is a custom agent the user adds by hand: its HTTPS endpoint is the user's explicit choice and must be shown in the UI.
 5. **No analytics or tracking SDKs.** The privacy policy promises none.
 6. Run `npm test && npm run typecheck` before a PR. CI runs the same plus a web export.
 

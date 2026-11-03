@@ -5,7 +5,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import type { Job } from "../core/orchestrator";
-import type { ProviderId } from "../core/providers";
+import type { CustomAgent, ProviderId } from "../core/providers";
 import type { RelaySettings } from "../core/relay";
 
 const JOBS = "passfair.jobs.v1";
@@ -41,6 +41,7 @@ export interface Connection {
   provider: ProviderId;
   model: string;
 }
+// Agents created by a sign-in share one key (keyRef). Their own model is stored under their id.
 
 export const keys = {
   async save(provider: ProviderId, model: string, key: string) {
@@ -51,14 +52,20 @@ export const keys = {
     await secureDel(KEY(provider));
     await AsyncStorage.removeItem(MODEL(provider));
   },
-  async get(provider: ProviderId): Promise<{ model: string; key: string } | null> {
-    const [key, model] = await Promise.all([secureGet(KEY(provider)), AsyncStorage.getItem(MODEL(provider))]);
+  async get(provider: ProviderId, keyRef?: string): Promise<{ model: string; key: string } | null> {
+    const [key, model] = await Promise.all([secureGet(KEY(keyRef || provider)), AsyncStorage.getItem(MODEL(provider))]);
     return key && model ? { key, model } : null;
   },
-  async list(ids: ProviderId[]): Promise<Connection[]> {
+  async saveKeyOnly(ref: string, key: string) {
+    await secureSet(KEY(ref), key);
+  },
+  async setModel(provider: ProviderId, model: string) {
+    await AsyncStorage.setItem(MODEL(provider), model);
+  },
+  async list(ids: ProviderId[], refs: Record<string, string | undefined> = {}): Promise<Connection[]> {
     const out: Connection[] = [];
     for (const p of ids) {
-      const c = await this.get(p);
+      const c = await this.get(p, refs[p]);
       if (c) out.push({ provider: p, model: c.model });
     }
     return out;
@@ -71,6 +78,13 @@ export interface Settings extends RelaySettings {
   minRounds?: number;
   autoHandoff?: "off" | "approved" | "always";
   seenWelcome?: boolean;
+  flow?: "brainstorm" | "build";
+  /** Agents chosen for the panel, in seat order. Empty = all connected, up to the plan limit. */
+  panel?: ProviderId[];
+  debateRounds?: number;
+  research?: boolean;
+  customAgents?: CustomAgent[];
+  pro?: { active: boolean; checked: string };
 }
 
 export const settings = {
