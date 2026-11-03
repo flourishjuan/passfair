@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 — hotfix (build after 22)
+- Fix launch crash on iOS: expo-print 58.0.8 required a newer ExpoModulesJSI than the app ships ("Symbol not found" at launch). All native modules are now pinned to exactly the versions this Expo SDK was tested with, and a test fails the build if any drifts.
+- Keychain-safe names for custom and OpenRouter agents (ids with ":" could not be saved).
+- Unexpected errors show on screen with "Copy error" instead of closing the app.
+- The clipboard is read only when you tap "Paste copied key" (no surprise paste prompts).
+- Type: one regular weight everywhere (no bold UI text); hierarchy by size and grey.
+- Text files decode even where TextDecoder is missing; stable list keys in the feed; a reminder to keep the app open while agents work.
+
 ## 2.0.0 — 2026-11-03
 1.2.0 was never released; everything in it ships here.
 

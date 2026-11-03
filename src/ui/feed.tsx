@@ -75,7 +75,7 @@ function Review({ e }: { e: JobEvent }) {
       {open &&
         r.issues.map((i, k) => (
           <Text key={k} style={F.small}>
-            <Text style={{ fontWeight: "700", color: T.ink }}>{i.severity.toUpperCase()}</Text> · {i.where}: {i.problem}{" "}
+            <Text style={{ fontWeight: "400", color: T.ink }}>{i.severity.toUpperCase()}</Text> · {i.where}: {i.problem}{" "}
             → {i.fix}
           </Text>
         ))}
@@ -105,7 +105,7 @@ function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDra
       </View>
       {!!e.lens && (
         <View style={f.lens}>
-          <Text style={[F.small, { color: T.ink, fontWeight: "600" }]}>↗ Borrowing from {e.lens}</Text>
+          <Text style={[F.small, { color: T.ink, fontWeight: "400" }]}>↗ Borrowing from {e.lens}</Text>
         </View>
       )}
       {e.review ? (
@@ -193,6 +193,7 @@ export function Working({ job }: { job: Job }) {
         {name} {many ? "are" : "is"} {ACTIVITY[role] || "working"}
         {many && job.current?.round ? ` (debate round ${job.current.round})` : ""}
         {dots}
+        {"\n"}Keep Passfair open until it finishes — iPhone pauses apps in the background.
       </Text>
     </View>
   );
@@ -241,5 +242,5 @@ const f = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
-  link: { color: T.purple, fontWeight: "600", fontSize: 14 },
+  link: { color: T.purple, fontWeight: "400", fontSize: 14 },
 });

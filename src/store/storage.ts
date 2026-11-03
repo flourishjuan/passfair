@@ -5,13 +5,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import type { Job } from "../core/orchestrator";
-import type { CustomAgent, ProviderId } from "../core/providers";
+import { type CustomAgent, type ProviderId, safeName } from "../core/providers";
 import type { RelaySettings } from "../core/relay";
 
 const JOBS = "passfair.jobs.v1";
 const SETTINGS = "passfair.settings.v1";
-const KEY = (p: string) => `passfair.key.${p}`;
-const MODEL = (p: string) => `passfair.model.${p}`;
+// Keychain names allow only letters, digits, ".", "-" and "_" — agent ids like "custom:acme" are made safe here.
+const KEY = (p: string) => `passfair.key.${safeName(p)}`;
+const MODEL = (p: string) => `passfair.model.${safeName(p)}`;
 
 export const secureAvailable = Platform.OS !== "web";
 

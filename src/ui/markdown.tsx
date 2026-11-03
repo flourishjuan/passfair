@@ -54,7 +54,7 @@ function Inline({ text, style }: { text: string; style?: object }) {
         <Text
           key={i}
           style={[
-            r.bold && { fontWeight: "700" },
+            r.bold && { fontWeight: "500" },
             r.italic && { fontStyle: "italic" },
             r.code && { fontFamily: "Menlo", backgroundColor: T.surface, fontSize: 14 },
           ]}
@@ -112,7 +112,7 @@ function Table({ rows }: { rows: string[][] }) {
           >
             {r.map((c, j) => (
               <View key={j} style={{ width: j === 0 ? 180 : 86, padding: 10 }}>
-                <Inline text={c} style={[F.small, { color: T.ink }, i === 0 && { fontWeight: "700" }]} />
+                <Inline text={c} style={[F.small, { color: T.ink }, i === 0 && { fontWeight: "400" }]} />
               </View>
             ))}
           </View>
