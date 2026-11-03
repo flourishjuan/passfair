@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0 — hotfix 4
+- Every agent is sized from a per-model profile (how much it can read, how long it can write, whether it thinks first) instead of one number for everyone: drafts get 8k tokens, reviews and ideas 3k, thinking models double with at least 6k, never above what the model allows. The connect form shows each model's limits.
+- Long discussions are condensed automatically for short-memory models (keeping the brief and the latest turn), and the feed says when that happened.
+- Agents sharing one key (e.g. several OpenRouter agents) take turns instead of hitting the account at once; the vendor's Retry-After is respected on rate limits.
+- Kimi now defaults to Kimi K2 (the 32k model was too short for debates).
+
 ## 2.0.0 — hotfix 3
 - Reasoning models (GPT-5, GPT-5 mini, o4-mini, Gemini 2.5, Grok 4, DeepSeek reasoner) no longer fail with "returned no text": they get room to think (at least 4,000 output tokens, low reasoning effort on OpenAI), and an answer that comes back empty after thinking is retried once with three times the budget. Connecting such a model works again.
 - If the cross-checker fails mid-job, the job continues with one reviewer and says so, instead of stopping after one round.

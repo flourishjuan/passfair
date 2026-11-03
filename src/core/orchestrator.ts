@@ -4,6 +4,7 @@
 // `maxRounds`, and the final version is the best-reviewed round (later rounds cannot silently make things worse).
 // External feedback (a publishing problem reported by Muse, or a new instruction typed by the user)
 // re-enters the loop as a review. Nothing here browses, sends, pays or publishes.
+import { budgetFor, estimateTokens, fitPrompt, profileFor } from "./profiles";
 import { complete, fail, type Fetcher, type MediaItem, type ProviderId, type Usage } from "./providers";
 import { BS_SYSTEM, DEMO_BS_DRAFT, type Stage, bsPrompt, demoBrainstorm, parseLenses, seatName } from "./brainstorm";
 
@@ -115,6 +116,8 @@ export interface JobEvent {
   failed?: boolean;
   /** How many times Passfair asked the agent to continue a cut-off answer. */
   continued?: number;
+  /** The prompt was condensed to fit this model's memory. */
+  condensed?: boolean;
   round: number;
   provider: string;
   model: string;
@@ -588,15 +591,6 @@ export interface RunDeps {
   media?: MediaItem[];
 }
 
-const MAX_TOKENS: Partial<Record<Role, number>> = {
-  reviewer: 3000,
-  verifier: 3000,
-  seer: 3000,
-  researcher: 3000,
-  framer: 2500,
-  panelist: 3000,
-  decider: 6000,
-};
 const CONTINUES: Partial<Record<Role, number>> = { worker: 3, polisher: 3, decider: 2, panelist: 1, seer: 1 };
 
 interface Out {
@@ -606,6 +600,7 @@ interface Out {
   usage: Usage;
   truncated?: boolean;
   continued?: number;
+  condensed?: boolean;
 }
 
 // Runs one job to completion. Everything the loop needs comes through `deps`, so it is testable.
@@ -629,14 +624,18 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
     const c = assigned ? credential(assigned) : null;
     if (!c) return fail(`No API key saved for ${assigned} (needed by ${role}).`, 409);
     const system = systemFor(job, role, o.seat || 0, round);
-    const prompt = o.stage ? bsPrompt(job, o.stage, o.seat || 0, round, headFor(job)) : promptFor(job, role, round);
+    const raw = o.stage ? bsPrompt(job, o.stage, o.seat || 0, round, headFor(job)) : promptFor(job, role, round);
+    // Budgets come from what this model can actually do (profiles.ts), not one number for everyone.
+    const prof = profileFor(c.provider, c.model);
+    const fitted = fitPrompt(raw, prof, budgetFor(role, prof));
+    const prompt = fitted.text;
     const req = {
       provider: c.provider,
       model: c.model,
       key: c.key,
       system,
       prompt,
-      maxTokens: MAX_TOKENS[role] ?? job.maxOutputTokens,
+      maxTokens: budgetFor(role, prof, estimateTokens(system + prompt)),
       search: o.search,
       media: o.media,
       signal,
@@ -661,7 +660,15 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       usage.input += out.usage.input;
       usage.output += out.usage.output;
     }
-    return { text, usage, truncated: out.truncated, continued, provider: c.provider, model: c.model };
+    return {
+      text,
+      usage,
+      truncated: out.truncated,
+      continued,
+      condensed: fitted.condensed,
+      provider: c.provider,
+      model: c.model,
+    };
   };
   const push = (role: Role, round: number, out: Out, extra: Partial<JobEvent> = {}) => {
     job.events.push({
@@ -674,6 +681,7 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       truncated: !!out.truncated,
       at: new Date().toISOString(),
       ...(out.continued ? { continued: out.continued } : {}),
+      ...(out.condensed ? { condensed: true } : {}),
       ...extra,
     });
     job.usage.input += out.usage.input || 0;
@@ -693,8 +701,30 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
   ) => {
     job.current = { role, round };
     save(job);
-    const results = await Promise.allSettled(
-      seats.map((i) => call(role, round, { provider: job.panel?.[i], seat: i, stage })),
+    // Agents on different keys run at the same time; agents sharing one key (e.g. several OpenRouter
+    // agents) take turns, so one account is never hit with several big requests at once.
+    const results: PromiseSettledResult<Out>[] = new Array(seats.length);
+    const groups = new Map<string, number[]>();
+    seats.forEach((i, k) => {
+      const p = job.panel?.[i] || "demo";
+      const key = job.mode === "demo" ? `demo-${k}` : credential(p)?.key || p;
+      groups.set(key, [...(groups.get(key) || []), k]);
+    });
+    await Promise.all(
+      [...groups.values()].map(async (ks) => {
+        for (const k of ks) {
+          if (aborted()) return;
+          const i = seats[k];
+          try {
+            results[k] = {
+              status: "fulfilled",
+              value: await call(role, round, { provider: job.panel?.[i], seat: i, stage }),
+            };
+          } catch (reason) {
+            results[k] = { status: "rejected", reason };
+          }
+        }
+      }),
     );
     if (aborted()) return false;
     results.forEach((r, k) => {

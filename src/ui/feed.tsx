@@ -128,6 +128,9 @@ function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDra
           <Markdown text={e.notes} />
         </View>
       )}
+      {!!e.condensed && (
+        <Text style={[F.small, { color: T.faint }]}>Earlier discussion was condensed to fit {e.model}'s memory.</Text>
+      )}
       {!!e.continued && (
         <Text style={[F.small, { color: T.faint }]}>Continued {e.continued}× so the answer arrived whole.</Text>
       )}
