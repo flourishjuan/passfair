@@ -50,7 +50,67 @@ const STARTERS = [
   "Plan a product launch for next month with zero ad spend. Borrow ideas from other industries.",
 ];
 
+// A last line of defence: an unexpected error shows on screen (so it can be screenshotted and fixed)
+// instead of closing the app.
+let fatal: Error | null = null;
+const fatalListeners = new Set<() => void>();
+const g = globalThis as any;
+if (g.ErrorUtils?.setGlobalHandler) {
+  const prev = g.ErrorUtils.getGlobalHandler?.();
+  g.ErrorUtils.setGlobalHandler((e: Error, isFatal?: boolean) => {
+    if (!isFatal) return prev?.(e, isFatal);
+    fatal = e;
+    fatalListeners.forEach((f) => f());
+  });
+}
+class Guard extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidMount() {
+    fatalListeners.add(this.onFatal);
+  }
+  componentWillUnmount() {
+    fatalListeners.delete(this.onFatal);
+  }
+  onFatal = () => this.setState({ error: fatal });
+  render() {
+    const e = this.state.error;
+    if (!e) return this.props.children;
+    const report = `Passfair error\n${e.message}\n${(e.stack || "").split("\n").slice(0, 8).join("\n")}`;
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={[styles.root, { padding: 24, gap: 16 }]}>
+          <Text style={F.title}>Something went wrong</Text>
+          <Text style={F.body}>Your conversations and keys are safe. Copy this and send it to support:</Text>
+          <ScrollView
+            style={{ maxHeight: 320, backgroundColor: T.surface, borderRadius: 16 }}
+            contentContainerStyle={{ padding: 14 }}
+          >
+            <Text selectable style={{ fontFamily: "Menlo", fontSize: 12, color: T.ink }}>
+              {report}
+            </Text>
+          </ScrollView>
+          <Row>
+            <Btn label="Copy error" kind="primary" onPress={() => Clipboard.setStringAsync(report)} />
+            <Btn label="Try again" onPress={() => this.setState({ error: null })} />
+          </Row>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
+}
+
 export default function App() {
+  return (
+    <Guard>
+      <Root />
+    </Guard>
+  );
+}
+
+function Root() {
   const [toastMsg, setToastMsg] = useState("");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toast = useCallback((m: string) => {
@@ -437,7 +497,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                   style={[styles.send, { backgroundColor: T.dangerSoft }]}
                   accessibilityLabel="Stop"
                 >
-                  <Text style={{ color: T.danger, fontSize: 16, fontWeight: "700" }}>■</Text>
+                  <Text style={{ color: T.danger, fontSize: 16, fontWeight: "400" }}>■</Text>
                 </Pressable>
               )}
               <Pressable
@@ -449,7 +509,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                 ]}
                 accessibilityLabel={mode === "send" ? "Send" : mode === "cutin" ? "Cut in" : "Reply"}
               >
-                <Text style={{ color: T.white, fontSize: 20, fontWeight: "700" }}>↑</Text>
+                <Text style={{ color: T.white, fontSize: 20, fontWeight: "400" }}>↑</Text>
               </Pressable>
             </View>
           </View>
@@ -529,7 +589,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   headBtn: { width: 76, height: 44, justifyContent: "center" },
-  dots: { fontSize: 18, letterSpacing: 1, color: T.ink, fontWeight: "700" },
+  dots: { fontSize: 18, letterSpacing: 1, color: T.ink },
   icon: { fontSize: 22, color: T.ink },
   feed: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 28 },
   card: { backgroundColor: T.surface, borderRadius: T.radius, padding: 16, gap: 4 },

@@ -3,6 +3,21 @@
 // images, PDFs, video and audio are passed to an agent that can see them (see providers.canSee).
 import { unzipSync } from "fflate";
 
+// UTF-8 decoding that works even where TextDecoder is missing (older Hermes builds).
+export function utf8(bytes: Uint8Array): string {
+  if (typeof TextDecoder !== "undefined") return new TextDecoder().decode(bytes);
+  let out = "";
+  for (let i = 0; i < bytes.length;) {
+    const b = bytes[i++];
+    let cp = b;
+    if (b >= 0xf0) cp = ((b & 7) << 18) | ((bytes[i++] & 63) << 12) | ((bytes[i++] & 63) << 6) | (bytes[i++] & 63);
+    else if (b >= 0xe0) cp = ((b & 15) << 12) | ((bytes[i++] & 63) << 6) | (bytes[i++] & 63);
+    else if (b >= 0xc0) cp = ((b & 31) << 6) | (bytes[i++] & 63);
+    out += String.fromCodePoint(cp);
+  }
+  return out;
+}
+
 export type AttachKind = "text" | "office" | "image" | "pdf" | "video" | "audio" | "link" | "unsupported";
 export interface Attachment {
   id: string;
@@ -103,8 +118,7 @@ const xmlText = (xml: string, paraTag: RegExp) =>
 
 export function officeToText(bytes: Uint8Array, name: string): string {
   const files = unzipSync(bytes);
-  const dec = new TextDecoder();
-  const read = (p: string) => (files[p] ? dec.decode(files[p]) : "");
+  const read = (p: string) => (files[p] ? utf8(files[p]) : "");
   const e = ext(name);
   if (e === "docx") return xmlText(read("word/document.xml"), /<\/w:p>/g);
   if (e === "pptx") {

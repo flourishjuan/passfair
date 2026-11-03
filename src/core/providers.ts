@@ -221,6 +221,9 @@ export const notConnectable: { name: string; note: string }[] = [
   },
 ];
 
+// Keychain item names allow only letters, digits, ".", "-" and "_".
+export const safeName = (p: string) => p.replace(/[^A-Za-z0-9._-]/g, "_");
+
 export const providers: Record<string, ProviderSpec> = Object.fromEntries(BUILTIN.map((p) => [p.id, p]));
 export const providerIds: ProviderId[] = BUILTIN.map((p) => p.id);
 

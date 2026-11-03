@@ -158,7 +158,7 @@ export const k = StyleSheet.create({
     justifyContent: "center",
   },
   btnSmall: { paddingHorizontal: 14, paddingVertical: 8 },
-  btnText: { fontSize: 15, fontWeight: "600", letterSpacing: -0.2 },
+  btnText: { fontSize: 15, fontWeight: "400", letterSpacing: -0.1 },
   chip: {
     flexDirection: "row",
     alignItems: "center",
@@ -168,7 +168,7 @@ export const k = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: T.surface,
   },
-  chipText: { fontSize: 14, fontWeight: "600", color: T.ink, letterSpacing: -0.1 },
+  chipText: { fontSize: 14, fontWeight: "400", color: T.ink },
   dot: { width: 8, height: 8, borderRadius: 8 },
   input: {
     backgroundColor: T.surface,

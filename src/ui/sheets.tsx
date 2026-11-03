@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
 import { seatName } from "../core/brainstorm";
 import { detectKey } from "../core/oauth";
@@ -46,15 +46,7 @@ function AgentForm({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
-  useEffect(() => {
-    // Recognise a key the user just copied from the vendor's page — one tap instead of pasting.
-    Clipboard.getStringAsync()
-      .then((t) => {
-        const d = detectKey(t);
-        if (d && d.provider === spec.id) setCopied(d.key);
-      })
-      .catch(() => {});
-  }, [spec.id]);
+
   const go = async (k: string) => {
     setBusy(true);
     setErr("");
@@ -301,7 +293,7 @@ export function MenuSheet(p: {
       {viaOr.length > 0 && <Section title="Via OpenRouter">{viaOr.map(row)}</Section>}
       <Section
         title="Direct to each vendor"
-        note="Tip: copy a key on the vendor's page, come back, and tap “Use the key you just copied”."
+        note="Tip: copy a key on the vendor's page, come back, and tap “Paste copied key”."
       >
         {builtin.map(row)}
         {notConnectable.map((n) => (

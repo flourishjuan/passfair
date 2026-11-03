@@ -296,3 +296,23 @@ test("plan: free keeps every feature visible but limited; pro lifts the limits",
   assert.equal(LIMITS.pro.video, true);
   assert.ok(LIMITS.pro.exports.includes("pptx") && !LIMITS.free.exports.includes("pptx"));
 });
+
+test("keychain names: agent ids with ':' are made safe", async () => {
+  const { safeName } = await import("../src/core/providers");
+  assert.equal(safeName("custom:acme co"), "custom_acme_co");
+  assert.equal(safeName("or:claude"), "or_claude");
+  assert.equal(safeName("anthropic"), "anthropic");
+});
+
+test("utf8 fallback decodes ASCII, Chinese and emoji like TextDecoder", async () => {
+  const { utf8 } = await import("../src/core/material");
+  const sample = "Price ¥49 价格 ✓ 🚀";
+  const bytes = new TextEncoder().encode(sample);
+  const saved = (globalThis as any).TextDecoder;
+  (globalThis as any).TextDecoder = undefined;
+  try {
+    assert.equal(utf8(bytes), sample);
+  } finally {
+    (globalThis as any).TextDecoder = saved;
+  }
+});

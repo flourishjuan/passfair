@@ -24,14 +24,14 @@ export const T = {
   muse: "#0866FF",
   radius: 22,
 };
-// System type (SF Pro / Roboto), weights and tracking close to Muse.
+// System type (SF Pro / Roboto), one regular weight everywhere — hierarchy comes from size and grey, like Gmail.
 export const F = {
-  display: { fontSize: 30, lineHeight: 36, fontWeight: "700" as const, letterSpacing: -0.8, color: T.ink },
-  title: { fontSize: 20, lineHeight: 26, fontWeight: "700" as const, letterSpacing: -0.4, color: T.ink },
-  head: { fontSize: 16, lineHeight: 22, fontWeight: "600" as const, letterSpacing: -0.2, color: T.ink },
-  body: { fontSize: 16, lineHeight: 24, color: T.ink },
-  small: { fontSize: 13, lineHeight: 18, color: T.sub },
-  label: { fontSize: 12, lineHeight: 16, fontWeight: "600" as const, letterSpacing: 0.3, color: T.sub },
+  display: { fontSize: 28, lineHeight: 36, fontWeight: "400" as const, letterSpacing: -0.2, color: T.ink },
+  title: { fontSize: 21, lineHeight: 28, fontWeight: "400" as const, color: T.ink },
+  head: { fontSize: 17, lineHeight: 23, fontWeight: "400" as const, color: T.ink },
+  body: { fontSize: 16, lineHeight: 24, fontWeight: "400" as const, letterSpacing: 0.1, color: T.ink },
+  small: { fontSize: 14, lineHeight: 20, fontWeight: "400" as const, letterSpacing: 0.1, color: T.sub },
+  label: { fontSize: 12, lineHeight: 16, fontWeight: "400" as const, letterSpacing: 0.6, color: T.sub },
 };
 export const vendorColor = (id: string): string =>
   getProvider(id)?.color ||
