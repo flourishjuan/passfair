@@ -13,6 +13,7 @@
     "expo-haptics": "58.0.7",
     "expo-iap": "6.4.1",
     "expo-image-picker": "58.0.10",
+    "expo-keep-awake": "58.0.3",
     "expo-linking": "58.0.14",
     "expo-print": "58.0.7",
     "expo-secure-store": "58.0.2",

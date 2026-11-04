@@ -318,6 +318,18 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     </Text>
                     {(job.final || lastDeliverable(job)) && <Markdown text={job.final || lastDeliverable(job)} />}
                     {job.mode === "live" && <RunFacts job={job} />}
+                    {job.status === "stopped" && (
+                      <Text style={[F.small, { color: T.ink }]}>
+                        {job.error === "interrupted"
+                          ? "The run was interrupted — the app was closed or the phone locked. "
+                          : "You stopped the run. "}
+                        {job.events.some((e) => e.role === "worker")
+                          ? "Tap Resume to carry on from the last finished step; nothing is lost."
+                          : job.events.some((e) => e.role === "decider")
+                            ? "The brainstorm and decision are done; tap Resume and the team writes and reviews the deliverable."
+                            : "Tap Resume to carry on from the last finished step; nothing is lost."}
+                      </Text>
+                    )}
                     {job.mode === "demo" ? (
                       <Text style={F.small}>
                         Connect your agents (••• top left) and send your own brief to run this for real.
@@ -333,7 +345,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                           )}
                           <Btn label="Read full screen" small onPress={() => setSheet("reader")} />
                           <Btn
-                            label={exportOpen ? "Download ▴" : "Download ▾"}
+                            label={`${job.final || lastDeliverable(job) ? "Download" : "Download decision"} ${exportOpen ? "▴" : "▾"}`}
                             small
                             onPress={() => setExportOpen(!exportOpen)}
                           />

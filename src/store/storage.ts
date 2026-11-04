@@ -106,7 +106,12 @@ export const jobs = {
     try {
       const xs: Job[] = JSON.parse((await AsyncStorage.getItem(JOBS)) || "[]");
       // Anything left "running" when the app was killed is resumable, not running.
-      for (const j of xs) if (j.status === "running") j.status = "stopped";
+      for (const j of xs)
+        if (j.status === "running" || j.status === "queued") {
+          j.status = "stopped";
+          j.current = null;
+          j.error = "interrupted";
+        }
       return xs;
     } catch {
       return [];

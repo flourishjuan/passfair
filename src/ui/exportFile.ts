@@ -56,8 +56,15 @@ export function exportMeta(job: Job) {
 export async function exportJob(job: Job, choice: ExportChoice): Promise<void> {
   if (job.mode === "demo") throw new Error("The demo is a scripted sample, not your work — nothing to export.");
   const format: ExportFormat = choice === "record" ? "md" : choice;
-  const text = choice === "record" ? recordOf(job) : job.final || lastDeliverable(job);
-  if (!text) throw new Error("Nothing to export yet.");
+  // No draft yet (the run stopped after the brainstorm): export the decision instead of nothing.
+  const draft = job.final || lastDeliverable(job);
+  const decision = job.events.find((e) => e.role === "decider" && !e.failed)?.text || "";
+  const text =
+    choice === "record"
+      ? recordOf(job)
+      : draft || (decision ? `# Decision (the draft was not written yet)\n\n${decision}` : "");
+  if (!text)
+    throw new Error("Nothing to download yet — the team stopped before writing anything. Tap Resume to continue.");
   const meta = {
     ...exportMeta(job),
     ...(choice === "record" ? { filename: `${exportMeta(job).filename}-record` } : {}),

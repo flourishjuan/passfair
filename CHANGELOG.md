@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0 — hotfix 5
+- The screen stays on while agents work (expo-keep-awake, pinned to the SDK version): a locked iPhone pauses the app and used to stop the run mid-way.
+- Resume works reliably: the screen knows when a run is active, and resuming a job stops any other run first instead of "Wait for the current job".
+- A stopped job explains why (closed / locked / you stopped it) and what Resume will do next.
+- Download works before the draft exists: you get the decision ("Download decision"), and the message says what to do when there is nothing yet. Not a plan limit — PDF and Markdown are free.
+
 ## 2.0.0 — hotfix 4
 - Every agent is sized from a per-model profile (how much it can read, how long it can write, whether it thinks first) instead of one number for everyone: drafts get 8k tokens, reviews and ideas 3k, thinking models double with at least 6k, never above what the model allows. The connect form shows each model's limits.
 - Long discussions are condensed automatically for short-memory models (keeping the brief and the latest turn), and the feed says when that happened.
