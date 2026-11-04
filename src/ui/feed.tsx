@@ -4,7 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { seatName } from "../core/brainstorm";
-import type { Job, JobEvent } from "../core/orchestrator";
+import type { Job, JobEvent, LiveTurn } from "../core/orchestrator";
 import { shortName } from "../core/providers";
 import { Dot } from "./kit";
 import { Markdown, blockCount } from "./markdown";
@@ -161,7 +161,26 @@ function EventView({
   );
 }
 
-export function Feed({ job, onReport }: { job: Job; onReport?: (e: JobEvent) => void }) {
+// An agent's turn while it is still writing: its words appear as they arrive.
+function LiveView({ job, t }: { job: Job; t: LiveTurn }) {
+  const e = { ...t, at: "", usage: { input: 0, output: 0 } } as unknown as JobEvent;
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={f.who}>
+        <Dot color={vendorColor(t.provider)} />
+        <Text style={F.head}>{who(job, e)}</Text>
+        {!!t.model && t.provider !== "demo" && <Text style={[F.small, { color: T.faint }]}>{t.model}</Text>}
+      </View>
+      {t.text ? (
+        <Markdown text={`${t.text} ▍`} />
+      ) : (
+        <Text style={[F.small, { color: T.faint }]}>{ACTIVITY[t.role] || "working"}…</Text>
+      )}
+    </View>
+  );
+}
+
+export function Feed({ job, onReport, live = [] }: { job: Job; onReport?: (e: JobEvent) => void; live?: LiveTurn[] }) {
   const finalDraftAt = (() => {
     if (!job.final) return -1;
     for (let i = job.events.length - 1; i >= 0; i--) {
@@ -186,6 +205,18 @@ export function Feed({ job, onReport }: { job: Job; onReport?: (e: JobEvent) => 
           ))}
         </View>
       ))}
+      {live.length > 0 && (
+        <View style={{ gap: 14 }}>
+          {(() => {
+            const g = groupKey({ ...live[0], at: "" } as unknown as JobEvent);
+            const last = groups(job).slice(-1)[0];
+            return last?.key === g.key ? null : <Text style={F.label}>{g.title.toUpperCase()}</Text>;
+          })()}
+          {live.map((t) => (
+            <LiveView key={`${t.role}|${t.round}|${t.stage || ""}|${t.seat ?? ""}`} job={job} t={t} />
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -220,7 +251,7 @@ export function Working({ job }: { job: Job }) {
         {name} {many ? "are" : "is"} {ACTIVITY[role] || "working"}
         {many && job.current?.round ? ` (debate round ${job.current.round})` : ""}
         {dots}
-        {"\n"}Keep Passfair open until it finishes — iPhone pauses apps in the background.
+        {"\n"}You can switch apps — Passfair carries on, or picks up where it left off when you come back.
       </Text>
     </View>
   );

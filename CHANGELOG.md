@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.0 — hotfix 10 (live writing, clearer answers, faster)
+- Live writing: every agent's words appear as it writes them (Claude, GPT, Gemini and the OpenAI-compatible agents); reviews appear when complete. The sample run types itself out too.
+- Clearer answers: the deliverable never shows the team's internal ids (A-1, B-H2 …) — the automatic check sends it back if it does; every number states its source or "estimate:" and why; recommendations, choices and rankings are written answer first → criteria → reasons and evidence → risks and next steps; about 800 words unless the brief asks for more.
+- Reviewers now check logic as its own category, and the main reviewer is never the agent that wrote the draft.
+- Faster: both reviewers read each draft at the same time; reading files, web research and framing the brainstorm run at the same time; Standard allows up to two drafts (was three). On the same brief this cuts the waiting by about a quarter before counting the live text.
+
+## 2.0.0 — hotfix 9 (language, background)
+- Every agent, at every step, writes in the language of the user's latest message (or of the conversation so far when a message is too short to tell).
+- Switching apps no longer stops a brief: Android keeps it running (a "Passfair agents are working" notification); iPhone keeps going while the system allows, then pauses and resumes by itself when Passfair is opened again.
+
 ## 2.0.0 — hotfix 8 (invite friends, free trial, new layout)
 - Invite friends: the gift at the top right opens your invite code, a share button, progress and your rewards. Every 3 friends who enter your code **and finish their first real brief** earn you one free month of Pro, delivered as an App Store offer code / Google Play promo code (up to 12 a year). Downloads, ratings and samples never count. No cash rewards.
 - Invite links (`https://challenge.agentsfair.ai/passfair/i/CODE`, `passfair://invite?code=CODE`) open the app with the code filled in; friends can also type it. The share text says the sender may get a free month.

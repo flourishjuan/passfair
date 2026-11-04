@@ -5,8 +5,8 @@ const isLogic = (p: string) => p === "anthropic" || /claude/i.test(p);
 const isStyle = (p: string) => p === "openai" || /gpt/i.test(p);
 
 // Preset-driven seat assignment: Claude for logic, GPT for polish, whatever is connected otherwise.
-// Cross-check: when two or more agents are connected, a second reviewer ("verifier") from a different
-// vendor than the main reviewer checks every round, so Claude and GPT audit each other.
+// Cross-check: when two or more agents are connected, the reviewer is never the agent that wrote the draft,
+// and a second reviewer ("verifier") from a different vendor checks every round, so agents audit each other.
 export function autoAssign(preset: PresetId, connected: ProviderId[]): Assignments {
   if (!connected.length)
     return {
@@ -31,7 +31,11 @@ export function autoAssign(preset: PresetId, connected: ProviderId[]): Assignmen
     a.polisher = style;
     a.reviewer = logic;
   }
-  const cross = connected.find((p) => p !== a.reviewer);
+  // Nobody grades their own work: the main reviewer is a different agent from the one that writes the draft.
+  const notWriter = connected.find((p) => p !== a.worker && p !== a.polisher) || connected.find((p) => p !== a.worker);
+  if (notWriter) a.reviewer = notWriter;
+  // The cross-checker is a third agent when there is one, otherwise anyone but the main reviewer.
+  const cross = connected.find((p) => p !== a.reviewer && p !== a.worker) || connected.find((p) => p !== a.reviewer);
   if (cross) a.verifier = cross;
   return a;
 }

@@ -309,6 +309,8 @@ export interface CompletionRequest {
   /** The shared opening of the prompt, identical across calls of one job — marked for prompt caching. */
   cachePrefix?: string;
   signal?: AbortSignal;
+  /** Called with the answer so far while the agent writes it (streaming). Omit for one reply at the end. */
+  onDelta?: (textSoFar: string) => void;
 }
 export interface Usage {
   input: number;
@@ -518,6 +520,154 @@ export function extract(spec: ProviderSpec, data: any): Completion {
 
 const RETRY = new Set([429, 500, 502, 503, 504, 529]);
 
+/* ---------- streaming: the answer appears while the agent writes it ---------- */
+
+// The request with the vendor's streaming switch on.
+function streamed(spec: ProviderSpec, built: { url: string; headers: Record<string, string>; body: any }) {
+  if (spec.api === "gemini")
+    return { ...built, url: built.url.replace(":generateContent", ":streamGenerateContent") + "?alt=sse" };
+  if (spec.api === "openai-chat")
+    return { ...built, body: { ...built.body, stream: true, stream_options: { include_usage: true } } };
+  return { ...built, body: { ...built.body, stream: true } };
+}
+
+// UTF-8 bytes → text, keeping a multi-byte character that is split across two chunks intact.
+export function utf8Decoder() {
+  let rest: number[] = [];
+  return (bytes: Uint8Array): string => {
+    const b = rest.length ? Uint8Array.from([...rest, ...bytes]) : bytes;
+    let end = b.length;
+    // Hold back an incomplete sequence at the end for the next chunk.
+    for (let k = 1; k <= Math.min(3, b.length); k++) {
+      const c = b[b.length - k];
+      if ((c & 0xc0) === 0x80) continue;
+      const need = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+      if (need > k) end = b.length - k;
+      break;
+    }
+    rest = Array.from(b.slice(end));
+    let out = "";
+    for (let i = 0; i < end;) {
+      const c = b[i];
+      let cp: number;
+      if (c < 0x80) ((cp = c), (i += 1));
+      else if (c < 0xe0) ((cp = ((c & 0x1f) << 6) | (b[i + 1] & 0x3f)), (i += 2));
+      else if (c < 0xf0) ((cp = ((c & 0x0f) << 12) | ((b[i + 1] & 0x3f) << 6) | (b[i + 2] & 0x3f)), (i += 3));
+      else
+        ((cp = ((c & 0x07) << 18) | ((b[i + 1] & 0x3f) << 12) | ((b[i + 2] & 0x3f) << 6) | (b[i + 3] & 0x3f)),
+          (i += 4));
+      out += String.fromCodePoint(cp);
+    }
+    return out;
+  };
+}
+
+// Folds server-sent events of one vendor into the same Completion the non-streaming path returns.
+export function sseAccumulator(spec: ProviderSpec, onDelta?: (t: string) => void) {
+  let text = "";
+  let buf = "";
+  const usage: Usage = { input: 0, output: 0, cached: 0 };
+  let truncated = false;
+  let final: Completion | null = null;
+  let error = false;
+  const add = (t: string) => {
+    if (!t) return;
+    text += t;
+    onDelta?.(text);
+  };
+  const event = (data: any) => {
+    if (!data || typeof data !== "object") return;
+    if (data.error || data.type === "error" || data.type === "response.failed") {
+      error = true;
+      return;
+    }
+    if (spec.api === "anthropic") {
+      if (data.type === "message_start") {
+        const u = data.message?.usage || {};
+        usage.input = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        usage.cached = u.cache_read_input_tokens || 0;
+      } else if (data.type === "content_block_delta" && data.delta?.type === "text_delta") add(data.delta.text);
+      else if (data.type === "message_delta") {
+        usage.output = data.usage?.output_tokens || usage.output;
+        if (data.delta?.stop_reason === "max_tokens") truncated = true;
+      }
+    } else if (spec.api === "openai-responses") {
+      if (data.type === "response.output_text.delta") add(data.delta);
+      else if ((data.type === "response.completed" || data.type === "response.incomplete") && data.response)
+        final = extract(spec, data.response);
+    } else if (spec.api === "gemini") {
+      const cand = data.candidates?.[0];
+      add((cand?.content?.parts || []).map((x: any) => x.text || "").join(""));
+      if (cand?.finishReason === "MAX_TOKENS") truncated = true;
+      if (data.usageMetadata) {
+        usage.input = data.usageMetadata.promptTokenCount || usage.input;
+        usage.output = data.usageMetadata.candidatesTokenCount || usage.output;
+        usage.cached = data.usageMetadata.cachedContentTokenCount || usage.cached;
+      }
+    } else {
+      const choice = data.choices?.[0];
+      const d = choice?.delta?.content;
+      add(Array.isArray(d) ? d.map((c: any) => c.text || "").join("") : d || "");
+      if (choice?.finish_reason === "length") truncated = true;
+      if (data.usage) {
+        usage.input = data.usage.prompt_tokens || usage.input;
+        usage.output = data.usage.completion_tokens || usage.output;
+        usage.cached = data.usage.prompt_tokens_details?.cached_tokens || data.usage.prompt_cache_hit_tokens || 0;
+      }
+    }
+  };
+  return {
+    push(chunk: string) {
+      buf += chunk.replace(/\r\n/g, "\n");
+      let i: number;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const data = block
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trimStart())
+          .join("\n");
+        if (!data || data === "[DONE]") continue;
+        try {
+          event(JSON.parse(data));
+        } catch {}
+      }
+    },
+    done(): Completion & { error: boolean } {
+      if (buf.trim()) this.push("\n\n");
+      const f = final as Completion | null;
+      return {
+        text: text || f?.text || "",
+        usage: f ? f.usage : usage,
+        truncated: f ? f.truncated : truncated,
+        sources: f?.sources,
+        error,
+      };
+    },
+  };
+}
+
+async function readStream(response: Response, spec: ProviderSpec, onDelta?: (t: string) => void) {
+  const acc = sseAccumulator(spec, onDelta);
+  const reader = (response as any).body?.getReader?.();
+  if (!reader) {
+    acc.push(await response.text()); // no streaming support here: same result, all at once
+    return acc.done();
+  }
+  const decode = utf8Decoder();
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    size += value.length || 0;
+    if (size > 4000000) fail("Provider response exceeded limit.", 502);
+    acc.push(typeof value === "string" ? value : decode(value));
+  }
+  return acc.done();
+}
+
 export async function complete(
   req: CompletionRequest,
   fetcher: Fetcher = fetch,
@@ -530,8 +680,11 @@ export async function complete(
   const asked = req.maxTokens ?? 4000;
   let budget = Math.min(prof.thinks ? Math.max(asked, MIN_REASONING_BUDGET) : asked, cap);
   let searched = !!req.search && spec.search === "tool";
+  // Web-search answers stay non-streamed so their source links come back complete.
+  let streaming = !!req.onDelta && !req.search;
   const once = async () => {
-    const built = buildRequest(spec, { ...req, maxTokens: budget, search: searched });
+    const plain = buildRequest(spec, { ...req, maxTokens: budget, search: searched });
+    const built = streaming ? streamed(spec, plain) : plain;
     const timeout = AbortSignal.timeout(240000);
     try {
       return await fetcher(built.url, {
@@ -549,6 +702,11 @@ export async function complete(
     // A model or account without web search access: answer without it rather than fail the run.
     if (searched && (response.status === 400 || response.status === 404)) {
       searched = false;
+      response = await once();
+    }
+    // An endpoint that refuses streaming (some compatible APIs): ask again the ordinary way.
+    if (streaming && (response.status === 400 || response.status === 422)) {
+      streaming = false;
       response = await once();
     }
     for (let i = 0; i < 3 && RETRY.has(response.status) && !req.signal?.aborted; i++) {
@@ -570,6 +728,17 @@ export async function complete(
                 ? "Out of credit with this provider."
                 : "Check model access and quota.";
       fail(`${spec.short} returned HTTP ${response.status}. ${hint}`, 502);
+    }
+    if (streaming) {
+      const st = await readStream(response, spec, req.onDelta);
+      if (st.error) fail(`${spec.short} reported an error. Check key, model and quota.`, 502);
+      return {
+        text: (st.text || "").trim(),
+        usage: st.usage,
+        truncated: st.truncated,
+        sources: st.sources,
+        searched: false,
+      };
     }
     const raw = await response.text();
     if (raw.length > 4000000) fail("Provider response exceeded limit.", 502);

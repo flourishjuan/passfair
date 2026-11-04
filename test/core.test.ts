@@ -159,15 +159,19 @@ test("providers: wire formats and secret-safe errors", async () => {
   assert.equal(v.ok, true);
 });
 
-test("autoAssign puts Claude on logic/review and GPT on polish when both are connected", () => {
+test("autoAssign: Claude writes, GPT polishes, and the main reviewer is never the writer", () => {
   const a = autoAssign("make_and_ship", ["openai", "anthropic"]);
   assert.deepEqual(a, {
     planner: "anthropic",
     worker: "anthropic",
     polisher: "openai",
-    reviewer: "anthropic",
-    verifier: "openai",
+    reviewer: "openai",
+    verifier: "anthropic",
   });
+  const three = autoAssign("make_and_ship", ["openai", "anthropic", "google"]);
+  assert.equal(three.worker, "anthropic");
+  assert.equal(three.reviewer, "google", "a third agent reviews when there is one");
+  assert.equal(three.verifier, "openai");
   const b = autoAssign("balanced", ["google"]);
   assert.deepEqual(b, { planner: "google", worker: "google", reviewer: "google" });
   assert.equal(autoAssign("balanced", []).planner, "demo");

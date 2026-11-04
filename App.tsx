@@ -324,7 +324,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     </Text>
                   )}
                 </View>
-                <Feed job={job} onReport={job.mode === "live" ? report : undefined} />
+                <Feed job={job} onReport={job.mode === "live" ? report : undefined} live={running ? st.live : []} />
                 {running && <Working job={job} />}
                 {job.status === "failed" && (
                   <View style={{ gap: 10 }}>

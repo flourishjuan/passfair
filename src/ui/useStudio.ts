@@ -18,10 +18,12 @@ import {
   packageFor,
   reopenWithFeedback,
   runJob,
+  type LiveTurn,
 } from "../core/orchestrator";
 import { DEPTH, LIMITS, type Tier, clamp } from "../core/plan";
 import {
   type CustomAgent,
+  type Fetcher,
   type MediaItem,
   type ProviderId,
   allProviders,
@@ -36,6 +38,18 @@ import { createRelayClient } from "../core/relay";
 import { type ReferralStatus, createReferralClient } from "../core/referral";
 import { AppState, Platform } from "react-native";
 import { holdBackground, releaseBackground, shouldAutoResume } from "./background";
+
+// Streaming needs a fetch whose response body can be read as it arrives: Expo's on phones, the browser's on web.
+const streamingFetch: Fetcher = (() => {
+  if (Platform.OS === "web") return (u, i) => fetch(u, i);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const f = require("expo/fetch").fetch;
+    return (u: string, i: RequestInit) => f(u, i as any) as unknown as Promise<Response>;
+  } catch {
+    return (u, i) => fetch(u, i);
+  }
+})();
 import {
   type Connection,
   type Settings,
@@ -73,6 +87,19 @@ export function useStudio(toast: Toast, tier: Tier) {
   const mediaRef = useRef(new Map<string, MediaItem[]>());
   // Set when the system took background time back (iOS): the run pauses and resumes on return.
   const bgCutRef = useRef(false);
+  // What each agent has written so far in the current run (shown live), refreshed a few times a second.
+  const liveRef = useRef(new Map<string, LiveTurn>());
+  const [live, setLive] = useState<LiveTurn[]>([]);
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onLive = useCallback((key: string, t: LiveTurn | null) => {
+    if (t) liveRef.current.set(key, t);
+    else liveRef.current.delete(key);
+    if (liveTimer.current) return;
+    liveTimer.current = setTimeout(() => {
+      liveTimer.current = null;
+      setLive([...liveRef.current.values()]);
+    }, 120);
+  }, []);
   const limits = LIMITS[tier];
 
   const persistJobs = useCallback((xs: Job[]) => {
@@ -209,6 +236,8 @@ export function useStudio(toast: Toast, tier: Tier) {
           signal: ac.signal,
           demoDelay: 650,
           media: mediaRef.current.get(j.id),
+          onLive,
+          fetcher: streamingFetch,
         });
         if (ac.signal.aborted) {
           j.status = "stopped";
@@ -245,6 +274,8 @@ export function useStudio(toast: Toast, tier: Tier) {
         abortRef.current = null;
         deactivateKeepAwake("passfair-run").catch(() => {});
         releaseBackground().catch(() => {});
+        liveRef.current.clear();
+        setLive([]);
         setJobs([...jobsRef.current]);
       }
     },
@@ -591,6 +622,7 @@ export function useStudio(toast: Toast, tier: Tier) {
     jobId,
     setJobId,
     runningId,
+    live,
     settings,
     saveSettings,
     relay,

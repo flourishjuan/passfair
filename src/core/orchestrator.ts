@@ -188,20 +188,28 @@ Only the supplied material counts as external facts; mark anything else as an as
 Write in the OUTPUT LANGUAGE stated at the top of the brief, in every step — the user reads the whole conversation.
 Be economical: never restate the brief, the material or what another agent already wrote — refer to it by its id (A-1, C3, I2) and add only what is new. No preamble, no closing summary, no filler.
 Never write a simulated conversation between AI agents — the real conversation between agents happens in Passfair and is recorded separately. If the brief asks for software, write the actual code and the exact commands to run it; you cannot run or deploy anything yourself, so say what must be run and by whom.
-Never use placeholder text ("Point A", "TBD", "to be defined", "[insert …]", "your company"). Never hand the work back to the user: where information is missing, state an explicit assumption with your reasoning and still commit to a concrete answer (a number, a name, a decision).`;
+Never use placeholder text ("Point A", "TBD", "to be defined", "[insert …]", "your company"). Never hand the work back to the user: where information is missing, state an explicit assumption with your reasoning and still commit to a concrete answer (a number, a name, a decision).
+Every number you give (price, cost, percentage, date, count) carries its basis right next to it: where it comes from in the material or research, or "estimate:" with a one-line reason. Never invent precise-looking figures; give a range when unsure.`;
+
+// What the user reads at the end. The ids above are for agents talking to each other, never for the user.
+const DELIVERABLE_RULES = `The deliverable is read by the user, who never sees the team's discussion: never use internal ids (A-1, B-H2, C3, I2), seat letters or agent names in it — name the thing itself.
+When the brief asks for a recommendation, choice, ranking or plan, structure the deliverable so the reasoning is visible: (1) the answer in one to three sentences; (2) the criteria used to decide; (3) for each option or recommendation, the reasons and the evidence or assumption behind each; (4) risks and the next concrete steps. A ranking states its criteria and why each item sits where it does; conclusions must follow from the reasons given, with no contradictions.
+Keep it tight: unless the brief asks for a long document or for code, stay within about 800 words (about 1,200 characters in Chinese or Japanese).`;
 
 const SYSTEM: Partial<Record<Role, string>> = {
   planner: `${COMMON}
 Your role: PLANNER. Turn the brief into a short, concrete work plan for the Worker: the exact deliverable, its structure, acceptance criteria the Reviewer will check (write them as numbered lines C1, C2, C3 … — one for EVERY explicit requirement and every item the brief asks for, each checkable by reading the deliverable), known facts from the material, open questions and assumptions. The acceptance criteria MUST include explicit design and structure criteria — organisation, section order, formatting and consistency; for code, architecture, interfaces and naming — not only content and factual criteria, so the Reviewer has concrete design and structure standards to check against. If a STARTING DRAFT is supplied, assess it first: what to keep, what is wrong or missing. Be specific and brief (under 400 words). Do not write the deliverable itself.`,
   worker: `${COMMON}
-Your role: WORKER. Produce the complete deliverable described in the brief and plan. Follow the plan's structure and acceptance criteria. Label assumptions clearly. If a STARTING DRAFT is supplied, build on it rather than starting over. When you receive issues (from the Reviewer, or reported back from deployment/publishing), fix every one of them and do not reintroduce earlier problems. Output the deliverable only, no commentary about the process — except on a revision: then, after the complete deliverable, add a line "${NOTES_MARK}" followed by one line per issue id ("I1: what you changed, quoting the new wording" or "I1: not changed — reason"). Every issue id must appear.`,
+Your role: WORKER. Produce the complete deliverable described in the brief and plan.
+${DELIVERABLE_RULES} Follow the plan's structure and acceptance criteria. Label assumptions clearly. If a STARTING DRAFT is supplied, build on it rather than starting over. When you receive issues (from the Reviewer, or reported back from deployment/publishing), fix every one of them and do not reintroduce earlier problems. Output the deliverable only, no commentary about the process — except on a revision: then, after the complete deliverable, add a line "${NOTES_MARK}" followed by one line per issue id ("I1: what you changed, quoting the new wording" or "I1: not changed — reason"). Every issue id must appear.`,
   polisher: `${COMMON}
-Your role: POLISHER. You receive a complete deliverable from the Worker. Improve expression, tone, clarity, formatting and audience fit. Do NOT change facts, numbers, code behaviour, commitments or the meaning of any statement; do NOT add claims. Output the full polished deliverable only.`,
+Your role: POLISHER. You receive a complete deliverable from the Worker.
+${DELIVERABLE_RULES} Improve expression, tone, clarity, formatting and audience fit. Do NOT change facts, numbers, code behaviour, commitments or the meaning of any statement; do NOT add claims. Output the full polished deliverable only.`,
   reviewer: `${COMMON}
 Your role: REVIEWER. You are independent and strict. Check the deliverable against the brief, the plan's acceptance criteria and the supplied material: factual errors, unsupported claims, contradictions, missing requirements, broken structure, wrong language, unsafe or impractical advice. Always assess design and structure as its own category — organisation, section order and flow, formatting consistency; for code, architecture, interfaces and naming — and report problems in that category as issues even when every fact is correct. If deployment or publishing feedback is present, verify it has been addressed.
 Respond with ONLY a JSON object, no prose before or after, in this exact shape:
 {"verdict":"pass"|"revise","score":0-10,"summary":"one or two sentences","criteria":[{"id":"C1","met":true|false,"evidence":"short quote from the deliverable that satisfies it, or empty"}],"issues":[{"severity":"high"|"medium"|"low","where":"section or quote","problem":"what is wrong","fix":"what to change"}],"assumptions":["each unverified assumption the deliverable relies on"]}
-Check EVERY acceptance criterion from the plan in "criteria"; a criterion is met only if you can quote concrete evidence from the deliverable. Report as HIGH issues: placeholder or template text; generic content that would fit any company or brief; a recommendation missing the specifics the brief asks for (who, what, price, numbers, dates, stop conditions); handing the work back to the user ("confirm with…", "research…") instead of committing to a stated assumption; revision notes that claim a fix the deliverable does not show.
+Check EVERY acceptance criterion from the plan in "criteria"; a criterion is met only if you can quote concrete evidence from the deliverable. Always check LOGIC as its own category: does each conclusion follow from the reasons given, are rankings backed by stated criteria, does any part contradict another. Report as HIGH issues: internal ids (A-1, B-H2, C3, I2) or agent names in the deliverable; numbers given without a source or an "estimate:" reason; a conclusion or ranking with no reasons; placeholder or template text; generic content that would fit any company or brief; a recommendation missing the specifics the brief asks for (who, what, price, numbers, dates, stop conditions); handing the work back to the user ("confirm with…", "research…") instead of committing to a stated assumption; revision notes that claim a fix the deliverable does not show.
 Use "pass" only when there are no high or medium issues and the deliverable genuinely merits a score of 8 or higher; a score below 8 is always "revise", never "pass". Be concrete; vague feedback is useless to the Worker.`,
   verifier: "",
 };
@@ -418,6 +426,16 @@ export function qualityGate(job: Job, round: number): Review {
         fix: "Replace every placeholder with concrete content, or a stated assumption plus a committed answer.",
       });
   }
+  // The team's internal ids (A-1, B-H2) mean nothing to the user. (Not flagged if the brief itself uses such codes.)
+  const ID = /(?<![\w-])[A-H]-H?\d{1,2}(?![\w-])/;
+  const id = draft.match(ID);
+  if (id && !ID.test(job.goal) && !ID.test(job.context || ""))
+    issues.push({
+      severity: "high",
+      where: `"${id[0]}"`,
+      problem: "Internal discussion ids appear in the deliverable; the user never saw the discussion.",
+      fix: "Replace every id with the name of the option itself.",
+    });
   const briefWords = words(job.goal).length;
   const n = words(draft).length;
   if (draft.trim() && briefWords >= 25 && n < Math.min(180, briefWords * 2))
@@ -664,7 +682,23 @@ export interface RunDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Attached images / PDFs / video for this run. Kept in memory only, never saved with the job. */
   media?: MediaItem[];
+  /** The text an agent has written so far, while it writes (null = that agent's turn is over). */
+  onLive?: (key: string, live: LiveTurn | null) => void;
 }
+
+export interface LiveTurn {
+  role: Role;
+  round: number;
+  stage?: Stage;
+  seat?: number;
+  provider: string;
+  model: string;
+  text: string;
+}
+export const liveKey = (role: string, round: number, stage?: string, seat?: number) =>
+  `${role}|${round}|${stage || ""}|${seat ?? ""}`;
+// Reviews are JSON: showing them half-written helps nobody, so they appear when complete.
+const STREAMS = (role: Role) => !isReviewRole(role);
 
 const CONTINUES: Partial<Record<Role, number>> = { worker: 3, polisher: 3, decider: 2, panelist: 1, seer: 1 };
 
@@ -691,8 +725,24 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
     o: { provider?: ProviderId; seat?: number; stage?: Stage; search?: boolean; media?: MediaItem[] } = {},
   ): Promise<Out> => {
     if (job.mode === "demo") {
-      await sleep(demoDelay);
       const text = o.stage ? demoBrainstorm(job, o.stage, o.seat || 0, round) : demoOutput(job, role, round);
+      if (deps.onLive && STREAMS(role)) {
+        // The sample types itself out like a real agent does.
+        const key = liveKey(role, round, o.stage, o.seat);
+        const steps = 8;
+        for (let k = 1; k <= steps; k++) {
+          await sleep(demoDelay / steps);
+          deps.onLive(key, {
+            role,
+            round,
+            stage: o.stage,
+            seat: o.seat,
+            provider: "demo",
+            model: "synthetic",
+            text: text.slice(0, Math.ceil((text.length * k) / steps)),
+          });
+        }
+      } else await sleep(demoDelay);
       return { text, usage: { input: 0, output: 0 }, truncated: false, provider: "demo", model: "synthetic" };
     }
     const assigned = o.provider || job.assignments[role];
@@ -713,6 +763,9 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
     const prof = profileFor(c.provider, c.model);
     const fitted = fitPrompt(raw, prof, budgetFor(role, prof));
     const prompt = fitted.text;
+    const key = liveKey(role, round, o.stage, o.seat);
+    const show = (t: string) =>
+      deps.onLive?.(key, { role, round, stage: o.stage, seat: o.seat, provider: c.provider, model: c.model, text: t });
     const req = {
       provider: c.provider,
       model: c.model,
@@ -724,16 +777,20 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       media: o.media,
       cachePrefix: shared && !fitted.condensed ? head : undefined,
       signal,
+      ...(deps.onLive && STREAMS(role) ? { onDelta: show } : {}),
     };
+    if (deps.onLive) show(""); // the agent's turn has started
     let out = await complete(req, fetcher, wait);
     let text = out.text;
     const usage = { ...out.usage };
     let continued = 0;
     while (out.truncated && continued < (CONTINUES[role] || 0) && !signal?.aborted) {
       continued++;
+      const before = text;
       out = await complete(
         {
           ...req,
+          ...(req.onDelta ? { onDelta: (t: string) => show(before + (/\s$/.test(before) ? "" : "\n") + t) } : {}),
           media: undefined,
           search: false,
           prompt: `${prompt}\n\n---\nYOUR ANSWER SO FAR (cut off by the length limit):\n${text.slice(-8000)}\n---\nContinue exactly where it stops. Output only the continuation — no repetition, no preamble.`,
@@ -757,6 +814,7 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
     };
   };
   const push = (role: Role, round: number, out: Out, extra: Partial<JobEvent> = {}) => {
+    deps.onLive?.(liveKey(role, round, extra.stage, extra.seat), null);
     job.events.push({
       role,
       round,
@@ -840,32 +898,42 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
   job.rounds = job.rounds || [];
   save(job);
 
-  // 1. Eyes: an agent that can see images / PDFs / video describes them for everyone else.
-  if (deps.media?.length && job.seer && !has((e) => e.role === "seer")) {
-    job.current = { role: "seer", round: 0 };
+  // 1–3a. Opening steps that don't depend on each other run at the same time:
+  // eyes (an agent that can see the attached files), live web research, and framing the brainstorm.
+  const opening: { role: Role; stage: Stage; run: () => Promise<Out>; extra: Partial<JobEvent> }[] = [];
+  if (deps.media?.length && job.seer && !has((e) => e.role === "seer"))
+    opening.push({
+      role: "seer",
+      stage: "media",
+      run: () => call("seer", 0, { provider: job.seer, stage: "media", media: deps.media }),
+      extra: { stage: "media" },
+    });
+  if (job.researcher && !has((e) => e.role === "researcher"))
+    opening.push({
+      role: "researcher",
+      stage: "research",
+      run: () => call("researcher", 0, { provider: job.researcher, stage: "research", search: true }),
+      extra: { stage: "research" },
+    });
+  const brainstorming =
+    job.flow === "brainstorm" && !!job.panel?.length && !has((e) => e.role === "decider" && !e.failed);
+  if (brainstorming && !has((e) => e.role === "framer"))
+    opening.push({
+      role: "framer",
+      stage: "frame",
+      run: () => call("framer", 0, { provider: job.panel![0], seat: 0, stage: "frame" }),
+      extra: { stage: "frame", seat: 0 },
+    });
+  if (opening.length) {
+    job.current = { role: opening[0].role, round: 0 };
     save(job);
-    const out = await call("seer", 0, { provider: job.seer, stage: "media", media: deps.media });
+    const outs = await Promise.all(opening.map((o) => o.run()));
     if (aborted()) return;
-    push("seer", 0, out, { stage: "media" });
+    opening.forEach((o, k) => push(o.role, 0, outs[k], o.extra));
   }
-  // 2. Research: live web search for the facts the brief depends on.
-  if (job.researcher && !has((e) => e.role === "researcher")) {
-    job.current = { role: "researcher", round: 0 };
-    save(job);
-    const out = await call("researcher", 0, { provider: job.researcher, stage: "research", search: true });
-    if (aborted()) return;
-    push("researcher", 0, out, { stage: "research" });
-  }
-  // 3. Brainstorm: frame → ideas through distant lenses → debate rounds → decision.
-  if (job.flow === "brainstorm" && job.panel?.length && !has((e) => e.role === "decider" && !e.failed)) {
+  // 3. Brainstorm: ideas through distant lenses → debate rounds → decision.
+  if (brainstorming && job.panel?.length) {
     const seats = job.panel.map((_, i) => i);
-    if (!has((e) => e.role === "framer")) {
-      job.current = { role: "framer", round: 0 };
-      save(job);
-      const out = await call("framer", 0, { provider: job.panel[0], seat: 0, stage: "frame" });
-      if (aborted()) return;
-      push("framer", 0, out, { stage: "frame", seat: 0 });
-    }
     if (!job.lenses?.length)
       job.lenses = parseLenses(job.events.find((e) => e.role === "framer")?.text || "", seats.length, job.id);
     const ideasMissing = seats.filter((i) => !has((e) => e.stage === "ideas" && e.seat === i && !e.failed));
@@ -936,19 +1004,30 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       }
       verdicts.push({ role: "check", provider: "passfair", verdict: gate.verdict, score: null });
     }
+    // Both reviewers read the draft at the same time (unless the saver asks the cross-checker to wait).
+    const together = !job.saver?.crossOnPassOnly;
+    const pending = new Map<Role, Promise<Out>>();
+    if (together)
+      for (const r of checkers) {
+        const p = call(r, round);
+        p.catch(() => {}); // handled below, in order
+        pending.set(r, p);
+      }
+    job.current = { role: checkers[0], round };
+    save(job);
     for (const r of [...checkers]) {
       // Saver: no point paying a second reviewer for a draft the first one (or the automatic check) already rejected.
-      if (r === "verifier" && job.saver?.crossOnPassOnly && verdicts.some((v) => v.verdict === "revise")) continue;
+      if (!together && r === "verifier" && verdicts.some((v) => v.verdict === "revise")) continue;
       job.current = { role: r, round };
       save(job);
       let rev: Out;
       try {
-        rev = await call(r, round);
+        rev = await (pending.get(r) || call(r, round));
       } catch (e: any) {
+        deps.onLive?.(liveKey(r, round), null);
         if (aborted()) return;
         // The cross-checker failing must not kill the job: carry on with one reviewer and say so.
         if (r !== "verifier") throw e;
-        const who = job.assignments.verifier || "";
         delete job.assignments.verifier;
         checkers.splice(checkers.indexOf("verifier"), 1);
         job.events.push({
@@ -961,7 +1040,6 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
           at: new Date().toISOString(),
           failed: true,
         });
-        void who;
         save(job);
         continue;
       }
