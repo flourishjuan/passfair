@@ -1,5 +1,6 @@
 // App state: agents, jobs, the running loop, files, Pro, Muse relay. One hook, used by App.tsx.
 import * as Crypto from "expo-crypto";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -57,6 +58,8 @@ export function useStudio(toast: Toast, tier: Tier) {
   const settingsRef = useRef<Settings>({});
   const abortRef = useRef<AbortController | null>(null);
   const runningRef = useRef<string | null>(null);
+  // Mirrors runningRef so the screen re-renders when a run starts or ends.
+  const [runningId, setRunningId] = useState<string | null>(null);
   const mediaRef = useRef(new Map<string, MediaItem[]>());
   const limits = LIMITS[tier];
 
@@ -131,8 +134,18 @@ export function useStudio(toast: Toast, tier: Tier) {
   // Runs a job in the foreground. The app must stay open; iOS suspends background JS.
   const run = useCallback(
     async (j: Job) => {
-      if (runningRef.current) return toast("Wait for the current job to finish, or stop it.");
+      if (runningRef.current === j.id) return toast("Already running — the team is working on it.");
+      if (runningRef.current) {
+        // Another job is still going: stop it first, then continue this one.
+        abortRef.current?.abort();
+        const t = Date.now();
+        while (runningRef.current && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 50));
+        if (runningRef.current) return toast("The other job is still finishing a step. Try again in a moment.");
+      }
       runningRef.current = j.id;
+      setRunningId(j.id);
+      // Keep the screen on while agents work: a locked iPhone pauses the app and the run stops.
+      activateKeepAwakeAsync("passfair-run").catch(() => {});
       const ac = new AbortController();
       abortRef.current = ac;
       setJobId(j.id);
@@ -168,7 +181,9 @@ export function useStudio(toast: Toast, tier: Tier) {
         toast(j.error!);
       } finally {
         runningRef.current = null;
+        setRunningId(null);
         abortRef.current = null;
+        deactivateKeepAwake("passfair-run").catch(() => {});
         setJobs([...jobsRef.current]);
       }
     },
@@ -494,7 +509,7 @@ export function useStudio(toast: Toast, tier: Tier) {
     job,
     jobId,
     setJobId,
-    runningId: runningRef.current,
+    runningId,
     settings,
     saveSettings,
     relay,
