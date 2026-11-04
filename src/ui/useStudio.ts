@@ -34,7 +34,8 @@ import {
 } from "../core/providers";
 import { createRelayClient } from "../core/relay";
 import { type ReferralStatus, createReferralClient } from "../core/referral";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
+import { holdBackground, releaseBackground, shouldAutoResume } from "./background";
 import {
   type Connection,
   type Settings,
@@ -70,6 +71,8 @@ export function useStudio(toast: Toast, tier: Tier) {
   // Mirrors runningRef so the screen re-renders when a run starts or ends.
   const [runningId, setRunningId] = useState<string | null>(null);
   const mediaRef = useRef(new Map<string, MediaItem[]>());
+  // Set when the system took background time back (iOS): the run pauses and resumes on return.
+  const bgCutRef = useRef(false);
   const limits = LIMITS[tier];
 
   const persistJobs = useCallback((xs: Job[]) => {
@@ -167,7 +170,8 @@ export function useStudio(toast: Toast, tier: Tier) {
     return panelOrder(chosen.length ? chosen : connectedIds).slice(0, limits.agents);
   }, [settings.panel, connectedIds.join(","), limits.agents]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Runs a job in the foreground. The app must stay open; iOS suspends background JS.
+  // Runs a job. Switching apps doesn't stop it: Android keeps it running in the background; iOS keeps it
+  // going as long as the system allows, then pauses it and picks it up again when Passfair is reopened.
   const run = useCallback(
     async (j: Job) => {
       if (runningRef.current === j.id) return toast("Already running — the team is working on it.");
@@ -184,6 +188,12 @@ export function useStudio(toast: Toast, tier: Tier) {
       activateKeepAwakeAsync("passfair-run").catch(() => {});
       const ac = new AbortController();
       abortRef.current = ac;
+      bgCutRef.current = false;
+      holdBackground(() => {
+        if (runningRef.current !== j.id) return;
+        bgCutRef.current = true;
+        ac.abort();
+      }).catch(() => {});
       setJobId(j.id);
       const creds: Record<string, { provider: ProviderId; model: string; key: string }> = {};
       const r = refs();
@@ -203,6 +213,7 @@ export function useStudio(toast: Toast, tier: Tier) {
         if (ac.signal.aborted) {
           j.status = "stopped";
           j.current = null;
+          if (bgCutRef.current) j.error = "interrupted"; // paused by the system, resumes on return
           upsert({ ...j });
         } else if (j.status === "awaiting_review") {
           // First real brief finished: tell the invite service once (this is what makes an invite count).
@@ -216,22 +227,43 @@ export function useStudio(toast: Toast, tier: Tier) {
             await handoff(j.id, true);
         }
       } catch (e: any) {
-        j.status = "failed";
         j.current = null;
-        j.error = e?.message || "Failed.";
-        upsert({ ...j });
-        toast(j.error!);
+        if (bgCutRef.current || AppState.currentState !== "active") {
+          // The connection dropped because the phone put Passfair in the background: not a real failure.
+          j.status = "stopped";
+          j.error = "interrupted";
+          upsert({ ...j });
+        } else {
+          j.status = "failed";
+          j.error = e?.message || "Failed.";
+          upsert({ ...j });
+          toast(j.error!);
+        }
       } finally {
         runningRef.current = null;
         setRunningId(null);
         abortRef.current = null;
         deactivateKeepAwake("passfair-run").catch(() => {});
+        releaseBackground().catch(() => {});
         setJobs([...jobsRef.current]);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [toast, upsert],
   );
+
+  // Back in Passfair (or opened again after it was closed): carry on with a paused run, no tap needed.
+  useEffect(() => {
+    if (!ready) return;
+    const resume = () => {
+      if (runningRef.current || AppState.currentState !== "active") return;
+      const j = jobsRef.current.find((x) => shouldAutoResume(x));
+      if (j) run(j).catch(() => {});
+    };
+    resume();
+    const sub = AppState.addEventListener("change", (st) => st === "active" && setTimeout(resume, 400));
+    return () => sub.remove();
+  }, [ready, run]);
 
   // Checks files against the plan and picks the agent that will look at them.
   function prepareFiles(files: Attachment[]) {
@@ -306,7 +338,9 @@ export function useStudio(toast: Toast, tier: Tier) {
         researcher: research,
         seer,
         attachments: files.map((a) => ({ name: a.name, mime: a.mime, kind: a.kind, chars: a.text?.length })),
+        previousLang: s.lastLang,
       });
+      if (j.lang && j.lang !== s.lastLang) saveSettings({ lastLang: j.lang }).catch(() => {});
       j.saver = d.saver;
       if (!d.polish) delete j.assignments.polisher;
       if (media.length) mediaRef.current.set(j.id, media);
@@ -333,6 +367,7 @@ export function useStudio(toast: Toast, tier: Tier) {
       if (lastWorker >= 0 && !(j.rounds || []).some((r) => r.round === lastRound))
         j.events = j.events.slice(0, lastWorker);
       reopenWithFeedback(j, source, problem);
+      if (j.lang && j.lang !== settingsRef.current.lastLang) saveSettings({ lastLang: j.lang }).catch(() => {});
       upsert({ ...j });
       await run(j);
     },
@@ -502,6 +537,7 @@ export function useStudio(toast: Toast, tier: Tier) {
         maxRounds: clamp(tier, "maxBuildRounds", settingsRef.current.maxRounds || 4),
         debateRounds: clamp(tier, "debateRounds", settingsRef.current.debateRounds || 2),
         origin: { source: "muse", orderId: o.id },
+        previousLang: settingsRef.current.lastLang,
       });
       upsert(j);
       done.orders.push(o.id);

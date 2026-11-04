@@ -356,7 +356,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     {job.status === "stopped" && (
                       <Text style={[F.small, { color: T.ink }]}>
                         {job.error === "interrupted"
-                          ? "The run was interrupted — the app was closed or the phone locked. "
+                          ? "Paused while Passfair was in the background — it carries on by itself when you open the app. "
                           : "You stopped the run. "}
                         {job.events.some((e) => e.role === "worker")
                           ? "Tap Resume to carry on from the last finished step; nothing is lost."

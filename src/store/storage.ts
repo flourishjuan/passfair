@@ -99,6 +99,8 @@ export interface Settings extends RelaySettings {
   pro?: { active: boolean; checked: string };
   /** The referral service was told this install finished its first real brief. */
   activatedSent?: boolean;
+  /** Language of the user's last conversation (e.g. "Simplified Chinese (简体中文)"). */
+  lastLang?: string;
 }
 
 export const settings = {
