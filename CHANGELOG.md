@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 — hotfix 7 (Android)
+- Google Play subscriptions: the purchase now passes the base-plan offer token Play Billing requires; "Manage subscription" opens Google Play's page for Passfair.
+- Photos and videos use Android's system Photo Picker, so the app no longer declares broad media/storage permissions (READ_MEDIA_*, READ/WRITE_EXTERNAL_STORAGE) or SYSTEM_ALERT_WINDOW — Play policy asks apps that only pick files to use the Photo Picker.
+- Keyboard no longer covers the composer; the composer clears Android's navigation bar (edge-to-edge); code uses Android's monospace font.
+- Store-neutral payment wording (Google Play on Android, Apple ID on iOS).
+- Report AI-generated content in the app (each message and the final result) — required by Google Play's AI-generated content policy, available on iOS too.
+
 ## 2.0.0 — hotfix 6 (token saver)
 - Depth: Quick / Standard (default) / Deep, in Team and as a chip next to the input. Measured on the same task (2 agents, ~3,000 words of material, one rejected round): Standard uses 43% fewer tokens and ~62% lower cost than before, in 9 waiting steps instead of 13; Quick 53% fewer tokens in 8 steps; Deep keeps the full process at ~28% lower cost through caching.
 - Prompt caching: every call of a job opens with the same system text and the same brief + material, then the role. Claude gets an explicit cache marker; OpenAI, Gemini and DeepSeek cache the identical opening automatically. The result shows how much input came from cache.

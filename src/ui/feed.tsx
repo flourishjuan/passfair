@@ -83,7 +83,17 @@ function Review({ e }: { e: JobEvent }) {
   );
 }
 
-function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDraft: boolean }) {
+function EventView({
+  job,
+  e,
+  isFinalDraft,
+  onReport,
+}: {
+  job: Job;
+  e: JobEvent;
+  isFinalDraft: boolean;
+  onReport?: (e: JobEvent) => void;
+}) {
   // Agents start ideas and debate turns with a one-line TL;DR; show just that until the user opens it.
   const tldr =
     (e.stage === "ideas" || e.stage === "debate") && /^TL;DR[:：]/i.test(e.text.trim())
@@ -107,6 +117,11 @@ function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDra
       <View style={f.who}>
         <Dot color={vendorColor(e.provider)} />
         <Text style={F.head}>{who(job, e)}</Text>
+        {!!onReport && e.role !== "check" && !e.failed && (
+          <Pressable onPress={() => onReport(e)} hitSlop={8} accessibilityLabel="Report this content">
+            <Text style={[F.small, { color: T.faint }]}>Report</Text>
+          </Pressable>
+        )}
         {!!e.model && e.provider !== "demo" && e.role !== "check" && (
           <Text style={[F.small, { color: T.faint }]}>{e.model}</Text>
         )}
@@ -146,7 +161,7 @@ function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDra
   );
 }
 
-export function Feed({ job }: { job: Job }) {
+export function Feed({ job, onReport }: { job: Job; onReport?: (e: JobEvent) => void }) {
   const finalDraftAt = (() => {
     if (!job.final) return -1;
     for (let i = job.events.length - 1; i >= 0; i--) {
@@ -166,6 +181,7 @@ export function Feed({ job }: { job: Job }) {
               job={job}
               e={e}
               isFinalDraft={job.events.indexOf(e) === finalDraftAt}
+              onReport={onReport}
             />
           ))}
         </View>

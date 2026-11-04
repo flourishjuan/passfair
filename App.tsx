@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Attachment } from "./src/core/material";
-import { lastDeliverable } from "./src/core/orchestrator";
+import { type JobEvent, lastDeliverable } from "./src/core/orchestrator";
 import { DEPTH, type Depth, LIMITS } from "./src/core/plan";
 import { shortName } from "./src/core/providers";
 import { settings as settingsStore } from "./src/store/storage";
@@ -26,7 +26,7 @@ import { Btn, Chip, Row } from "./src/ui/kit";
 import { Logo } from "./src/ui/Logo";
 import { Markdown } from "./src/ui/markdown";
 import { usePro } from "./src/ui/purchases";
-import { HistorySheet, MenuSheet, Paywall, Reader, TeamSheet, WorkSheet } from "./src/ui/sheets";
+import { HistorySheet, MenuSheet, Paywall, Reader, ReportSheet, TeamSheet, WorkSheet } from "./src/ui/sheets";
 import { F, T, vendorColor } from "./src/ui/theme";
 import { useStudio } from "./src/ui/useStudio";
 
@@ -88,7 +88,10 @@ class Guard extends React.Component<{ children: React.ReactNode }, { error: Erro
             style={{ maxHeight: 320, backgroundColor: T.surface, borderRadius: 16 }}
             contentContainerStyle={{ padding: 14 }}
           >
-            <Text selectable style={{ fontFamily: "Menlo", fontSize: 12, color: T.ink }}>
+            <Text
+              selectable
+              style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, color: T.ink }}
+            >
               {report}
             </Text>
           </ScrollView>
@@ -135,7 +138,12 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
   const st = useStudio(toast, pro.tier);
   saveProRef.current = (active) => st.saveSettings({ pro: { active, checked: new Date().toISOString() } });
 
-  const [sheet, setSheet] = useState<null | "menu" | "team" | "pro" | "history" | "work" | "reader">(null);
+  const [sheet, setSheet] = useState<null | "menu" | "team" | "pro" | "history" | "work" | "reader" | "report">(null);
+  const [reportOf, setReportOf] = useState<JobEvent | null>(null);
+  const report = (e: JobEvent | null) => {
+    setReportOf(e);
+    setSheet("report");
+  };
   const [text, setText] = useState("");
   const [files, setFiles] = useState<Attachment[]>([]);
   const [attachOpen, setAttachOpen] = useState(false);
@@ -221,7 +229,10 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
+      <SafeAreaView
+        style={styles.root}
+        edges={Platform.OS === "android" ? ["top", "left", "right", "bottom"] : ["top", "left", "right"]}
+      >
         <StatusBar style="dark" />
         <View style={styles.header}>
           <Pressable
@@ -243,7 +254,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
           </View>
         </View>
 
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
           <ScrollView
             ref={scroll}
             style={{ flex: 1 }}
@@ -289,7 +300,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     </Text>
                   )}
                 </View>
-                <Feed job={job} />
+                <Feed job={job} onReport={job.mode === "live" ? report : undefined} />
                 {running && <Working job={job} />}
                 {job.status === "failed" && (
                   <View style={{ gap: 10 }}>
@@ -364,6 +375,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                               }).catch(() => {})
                             }
                           />
+                          <Btn label="Report" small kind="plain" onPress={() => report(null)} />
                           <Btn
                             label="Delete"
                             small
@@ -588,6 +600,13 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
           }}
         />
         <WorkSheet visible={sheet === "work"} onClose={() => setSheet(null)} job={job} running={running} />
+        <ReportSheet
+          visible={sheet === "report"}
+          onClose={() => setSheet(null)}
+          job={job}
+          event={reportOf}
+          onSent={() => toast("Thanks — choose how to send the report.")}
+        />
         <Reader
           visible={sheet === "reader"}
           onClose={() => setSheet(null)}

@@ -1,7 +1,7 @@
 // Renders what the agents write: headings, lists, bold/italic/code, quotes, code blocks and tables.
 // Uses the same parser as the Word / PowerPoint export, plus table support for decision matrices.
 import React from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Platform, ScrollView, Text, View } from "react-native";
 import { type Block, inlineRuns, parseMarkdown } from "../core/export";
 import { F, T } from "./theme";
 
@@ -56,7 +56,11 @@ function Inline({ text, style }: { text: string; style?: object }) {
           style={[
             r.bold && { fontWeight: "500" },
             r.italic && { fontStyle: "italic" },
-            r.code && { fontFamily: "Menlo", backgroundColor: T.surface, fontSize: 14 },
+            r.code && {
+              fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+              backgroundColor: T.surface,
+              fontSize: 14,
+            },
           ]}
         >
           {r.text}
@@ -83,7 +87,15 @@ function BlockView({ b }: { b: Block }) {
         style={{ backgroundColor: T.surface, borderRadius: 12 }}
         contentContainerStyle={{ padding: 12 }}
       >
-        <Text selectable style={{ fontFamily: "Menlo", fontSize: 13, lineHeight: 19, color: T.ink }}>
+        <Text
+          selectable
+          style={{
+            fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+            fontSize: 13,
+            lineHeight: 19,
+            color: T.ink,
+          }}
+        >
           {b.text}
         </Text>
       </ScrollView>
