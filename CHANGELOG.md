@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 — hotfix 6 (token saver)
+- Depth: Quick / Standard (default) / Deep, in Team and as a chip next to the input. Measured on the same task (2 agents, ~3,000 words of material, one rejected round): Standard uses 43% fewer tokens and ~62% lower cost than before, in 9 waiting steps instead of 13; Quick 53% fewer tokens in 8 steps; Deep keeps the full process at ~28% lower cost through caching.
+- Prompt caching: every call of a job opens with the same system text and the same brief + material, then the role. Claude gets an explicit cache marker; OpenAI, Gemini and DeepSeek cache the identical opening automatically. The result shows how much input came from cache.
+- Revisions send only the sections that change ("## " headings) and Passfair merges them; the second reviewer checks only drafts the first one passed; no full-text polish pass outside Deep.
+- Agents start ideas and debate turns with a one-line TL;DR (shown folded), never restate the brief or each other (they cite ids), and have tighter word limits.
+- Fix: a targeted fix to one section of a long draft was mistaken for "unchanged" and caused extra rounds.
+
 ## 2.0.0 — hotfix 5
 - The screen stays on while agents work (expo-keep-awake, pinned to the SDK version): a locked iPhone pauses the app and used to stop the run mid-way.
 - Resume works reliably: the screen knows when a run is active, and resuming a job stops any other run first instead of "Wait for the current job".

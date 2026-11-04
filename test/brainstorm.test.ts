@@ -54,27 +54,27 @@ function vendors(opts: { failSeat?: string; truncateWorkerOnce?: boolean } = {})
   const f = async (url: string, init: any) => {
     const body = JSON.parse(init.body);
     calls.push({ url, body });
-    const sys = JSON.stringify(body.system || body.instructions || body.messages?.[0]?.content || "");
+    const sys = JSON.stringify(body);
     let text = "ok";
     let truncated = false;
-    if (/EYES of the team/.test(sys)) text = "Image shows a price list: Croissant $4.";
-    else if (/RESEARCHER/.test(sys)) text = "Competitor X charges $30/month (source).";
-    else if (/FRAMER/.test(sys))
+    if (/Your role: EYES/.test(sys)) text = "Image shows a price list: Croissant $4.";
+    else if (/Your role: RESEARCHER/.test(sys)) text = "Competitor X charges $30/month (source).";
+    else if (/Your role: FRAMER/.test(sys))
       text = "## Decision criteria\nC1. names the buyer\nDOMAINS: Chess clubs; Air traffic control; Perfume launches";
-    else if (/PANELIST/.test(sys) && /debate round/.test(sys))
+    else if (/Your role: PANELIST/.test(sys) && /debate round/.test(sys))
       text = `debate from ${url.includes("x.ai") ? "Grok" : "other"}`;
-    else if (/PANELIST/.test(sys)) {
+    else if (/Your role: PANELIST/.test(sys)) {
       if (opts.failSeat && url.includes(opts.failSeat)) return resp({}, 500);
       text = "A-1 idea with a number $49";
-    } else if (/DECIDER/.test(sys))
+    } else if (/Your role: DECIDER/.test(sys))
       text = "## Decision\nSell X to Y.\n## Acceptance criteria for the final deliverable\nC1. names the buyer";
-    else if (/WORKER/.test(sys)) {
+    else if (/Your role: WORKER/.test(sys)) {
       text = "Buyer: export managers. ".repeat(30);
       if (cut) {
         cut = false;
         truncated = true;
       }
-    } else if (/REVIEWER/.test(sys))
+    } else if (/Your role: REVIEWER/.test(sys))
       text = `{"verdict":"pass","score":9,"summary":"ok","criteria":[{"id":"C1","met":true,"evidence":"Buyer: export managers"}],"issues":[]}`;
     if (url.includes("anthropic"))
       return resp({
@@ -366,10 +366,10 @@ test("a failing cross-checker does not stop the job: it continues with one revie
   });
   const f = (async (url: string, init: any) => {
     if (url.includes("openai.com")) return resp({ status: "incomplete", output: [] });
-    const sys = JSON.stringify(JSON.parse(init.body).system);
-    const text = /REVIEWER/.test(sys)
+    const sys = JSON.stringify(JSON.parse(init.body));
+    const text = /Your role: REVIEWER/.test(sys)
       ? `{"verdict":"pass","score":9,"summary":"ok","criteria":[{"id":"C1","met":true,"evidence":"Buyer: export managers"}],"issues":[]}`
-      : /PLANNER/.test(sys)
+      : /Your role: PLANNER/.test(sys)
         ? "C1. names the buyer"
         : "Buyer: export managers. ".repeat(20);
     return resp({ content: [{ type: "text", text }], stop_reason: "end_turn" });

@@ -5,7 +5,7 @@ import { seatName } from "../core/brainstorm";
 import { detectKey } from "../core/oauth";
 import { profileFor } from "../core/profiles";
 import type { Job } from "../core/orchestrator";
-import { LIMITS, PRO_PITCH, type Tier } from "../core/plan";
+import { DEPTH, type Depth, LIMITS, PRO_PITCH, type Tier } from "../core/plan";
 import {
   type CustomAgent,
   type ProviderId,
@@ -404,9 +404,7 @@ export function TeamSheet(p: {
     if (!on && chosen.length >= L.agents) return p.onPro();
     p.onChange({ panel: on ? chosen.filter((x) => x !== id) : [...chosen, id] });
   };
-  const debate = p.settings.debateRounds || 2;
-  const minR = p.settings.minRounds || 2;
-  const maxR = Math.max(p.settings.maxRounds || 4, minR);
+  const depth: Depth = p.settings.depth || "standard";
   return (
     <Sheet visible={p.visible} title="Team" onClose={p.onClose}>
       <Section title="How the team works">
@@ -445,51 +443,17 @@ export function TeamSheet(p: {
         )}
         <Text style={F.small}>Seat 1 frames the question and makes the final decision.</Text>
       </Section>
-      <Section title="Debate rounds">
+      <Section title="Depth" note={DEPTH[depth].note}>
         <Row>
-          {[1, 2, 3, 4].map((n) => (
-            <Chip
-              key={n}
-              label={String(n)}
-              on={debate === n}
-              locked={n > L.debateRounds}
-              onPress={() => (n > L.debateRounds ? p.onPro() : p.onChange({ debateRounds: n }))}
-            />
+          {(Object.keys(DEPTH) as Depth[]).map((d) => (
+            <Chip key={d} label={DEPTH[d].label} on={depth === d} onPress={() => p.onChange({ depth: d })} />
           ))}
         </Row>
-      </Section>
-      <Section
-        title="Draft & review rounds"
-        note="The team always runs the minimum, then stops when both reviewers approve. The final is the best-reviewed round."
-      >
-        <Text style={F.small}>Minimum</Text>
-        <Row>
-          {[1, 2, 3, 4].map((n) => (
-            <Chip
-              key={n}
-              label={String(n)}
-              on={minR === n}
-              locked={n > L.maxBuildRounds}
-              onPress={() =>
-                n > L.maxBuildRounds ? p.onPro() : p.onChange({ minRounds: n, maxRounds: Math.max(n, maxR) })
-              }
-            />
-          ))}
-        </Row>
-        <Text style={F.small}>Maximum</Text>
-        <Row>
-          {[2, 3, 4, 6, 8]
-            .filter((n) => n >= minR)
-            .map((n) => (
-              <Chip
-                key={n}
-                label={String(n)}
-                on={maxR === n}
-                locked={n > L.maxBuildRounds}
-                onPress={() => (n > L.maxBuildRounds ? p.onPro() : p.onChange({ maxRounds: n }))}
-              />
-            ))}
-        </Row>
+        <Text style={F.small}>
+          {DEPTH[depth].debateRounds} debate round{DEPTH[depth].debateRounds === 1 ? "" : "s"} · up to{" "}
+          {DEPTH[depth].maxRounds} draft & review rounds{DEPTH[depth].polish ? " · polish pass" : ""}. Every step reuses
+          the shared brief from the vendor's cache where the vendor supports it.
+        </Text>
       </Section>
       <Section title="Data">
         <ToggleRow

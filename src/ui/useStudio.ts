@@ -19,7 +19,7 @@ import {
   reopenWithFeedback,
   runJob,
 } from "../core/orchestrator";
-import { LIMITS, type Tier, clamp } from "../core/plan";
+import { DEPTH, LIMITS, type Tier, clamp } from "../core/plan";
 import {
   type CustomAgent,
   type MediaItem,
@@ -249,6 +249,7 @@ export function useStudio(toast: Toast, tier: Tier) {
             : connectedIds.find((p) => getProvider(p)?.search === "tool")
           : undefined;
       const team = flow === "brainstorm" ? panel : connectedIds;
+      const d = DEPTH[s.depth || "standard"];
       const j = newJob({
         goal,
         context,
@@ -256,14 +257,16 @@ export function useStudio(toast: Toast, tier: Tier) {
         preset,
         flow,
         panel: flow === "brainstorm" ? panel : undefined,
-        debateRounds: clamp(tier, "debateRounds", s.debateRounds || 2),
+        debateRounds: Math.min(d.debateRounds, LIMITS[tier].debateRounds),
         assignments: autoAssign(preset, team),
-        maxRounds: clamp(tier, "maxBuildRounds", s.maxRounds || 4),
-        minRounds: Math.min(s.minRounds || 2, clamp(tier, "maxBuildRounds", s.maxRounds || 4)),
+        maxRounds: clamp(tier, "maxBuildRounds", d.maxRounds),
+        minRounds: Math.min(d.minRounds, clamp(tier, "maxBuildRounds", d.maxRounds)),
         researcher: research,
         seer,
         attachments: files.map((a) => ({ name: a.name, mime: a.mime, kind: a.kind, chars: a.text?.length })),
       });
+      j.saver = d.saver;
+      if (!d.polish) delete j.assignments.polisher;
       if (media.length) mediaRef.current.set(j.id, media);
       upsert(j);
       await run(j);

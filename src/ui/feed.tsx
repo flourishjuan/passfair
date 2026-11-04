@@ -84,7 +84,15 @@ function Review({ e }: { e: JobEvent }) {
 }
 
 function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDraft: boolean }) {
-  const long = blockCount(e.text) > 8;
+  // Agents start ideas and debate turns with a one-line TL;DR; show just that until the user opens it.
+  const tldr =
+    (e.stage === "ideas" || e.stage === "debate") && /^TL;DR[:：]/i.test(e.text.trim())
+      ? e.text
+          .trim()
+          .split("\n")[0]
+          .replace(/^TL;DR[:：]\s*/i, "")
+      : "";
+  const long = !!tldr || blockCount(e.text) > 8;
   const startOpen = e.stage === "decision" || e.stage === "frame" || e.role === "feedback";
   const [open, setOpen] = useState(startOpen || !long);
   if (e.role === "feedback")
@@ -114,7 +122,7 @@ function EventView({ job, e, isFinalDraft }: { job: Job; e: JobEvent; isFinalDra
         <Text style={F.small}>This draft is the final version below.</Text>
       ) : (
         <>
-          <Markdown text={e.text} limit={open ? undefined : 6} />
+          {tldr && !open ? <Text style={F.body}>{tldr}</Text> : <Markdown text={e.text} limit={open ? undefined : 6} />}
           {long && (
             <Pressable onPress={() => setOpen(!open)} hitSlop={6}>
               <Text style={f.link}>{open ? "Show less" : "Show all"}</Text>
@@ -220,6 +228,9 @@ export function RunFacts({ job }: { job: Job }) {
         {job.usage.calls} AI calls · {(job.usage.input + job.usage.output).toLocaleString()} tokens
         {models.length ? ` · ${models.join(", ")}` : ""}
         {crit.length ? ` · requirements met: ${crit.filter((c) => c.met).length}/${crit.length}` : ""}
+        {job.usage.cached && job.usage.input
+          ? ` · ${Math.round((100 * job.usage.cached) / job.usage.input)}% of input from cache`
+          : ""}
       </Text>
       {assumptions.length > 0 && <Text style={F.small}>Still unverified: {assumptions.join(" · ")}</Text>}
     </View>

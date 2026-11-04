@@ -70,19 +70,19 @@ export const BS_SYSTEM = {
 ## What we don't know — each unknown with the working assumption the team will use.
 ## Decision criteria — numbered C1, C2 … covering EVERY requirement in the brief, each measurable.
 ## Cross-domain lenses — ${n} fields FAR from this industry where a structurally similar problem has been solved well; one line each on the analogous problem.
-End with one line exactly: DOMAINS: field 1; field 2; … (${n} fields).`,
+Under 300 words. End with one line exactly: DOMAINS: field 1; field 2; … (${n} fields).`,
   ideas: (seat: string, letter: string, lens: string) =>
     `Your role: PANELIST "${seat}" in a live brainstorm with other AI agents from different vendors. Your cross-domain lens: ${lens}.
 Give exactly 3 options, labelled ${letter}-1, ${letter}-2, ${letter}-3. At least one must be marked "↗ BORROWED FROM ${lens.toUpperCase()}": name who in ${lens} solves an analogous problem, the exact mechanism, and how it transfers here (what changes, what breaks).
 For every option: who pays or uses it · the mechanism · one number (price, size, cost, time — a labelled assumption is fine) · the first concrete step this week · the main risk.
-Be bold and specific. No generic advice, no option a consultant would give any company. Do not write the other panelists' parts.`,
+Start with one line "TL;DR: …" naming your three options. Be bold and specific; under 350 words in total. No generic advice, no option a consultant would give any company. Do not write the other panelists' parts.`,
   debate: (seat: string, letter: string, d: number) =>
     `Your role: PANELIST "${seat}", debate round ${d} of a live brainstorm. Talk to the other panelists by name.
 1. Attack — pick the two weakest-looking ideas from OTHER panelists; for each, the strongest objection and the evidence that would settle it.
 2. Steal & combine — one hybrid that joins a mechanism from another panelist's idea with one of yours; label it ${letter}-H${d} and say whose idea you took.
 3. Defend or drop — answer every critique of your own ideas from the previous round: upgrade it, defend it with reasoning, or drop it explicitly.
 4. Ranking — your current top 3 idea ids, one line each.
-Disagree where you disagree. Under 450 words.`,
+Start with one line "TL;DR: …" (your current pick and the one objection that matters most). Quote nobody at length — use idea ids. Disagree where you disagree. Under 300 words.`,
   decider: `Your role: DECIDER. You have the frame, every idea and the full debate. Output markdown:
 ## Decision matrix — a markdown table: rows = the 3–5 strongest ideas or hybrids (by id), columns = each criterion C1… scored 1–5, then Total.
 ## Decision — the one option (or hybrid) to pursue, in three sentences.
@@ -91,7 +91,8 @@ Disagree where you disagree. Under 450 words.`,
 ## Risks & stop rule — measurable kill criteria with a date.
 ## Assumptions to verify — each with the cheapest way to verify it.
 ## Next 3 actions — owner-assignable, with dates relative to today.
-## Acceptance criteria for the final deliverable — numbered C1, C2 … restating EVERY requirement in the original brief, for the reviewers.`,
+## Acceptance criteria for the final deliverable — numbered C1, C2 … restating EVERY requirement in the original brief, for the reviewers.
+Start with one line "TL;DR: …" (the decision in one sentence). Under 600 words plus the table.`,
 };
 
 export function bsPrompt(job: Job, stage: Stage, seat = 0, round = 0, head = ""): string {

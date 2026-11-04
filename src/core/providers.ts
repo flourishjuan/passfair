@@ -306,11 +306,15 @@ export interface CompletionRequest {
   search?: boolean;
   /** Files the agent should look at directly (only kinds it supports are sent). */
   media?: MediaItem[];
+  /** The shared opening of the prompt, identical across calls of one job — marked for prompt caching. */
+  cachePrefix?: string;
   signal?: AbortSignal;
 }
 export interface Usage {
   input: number;
   output: number;
+  /** Input tokens the vendor served from its prompt cache (billed far cheaper). */
+  cached?: number;
 }
 export interface Completion {
   text: string;
@@ -331,11 +335,15 @@ function buildRequest(
     maxTokens: number;
     search: boolean;
     media?: MediaItem[];
+    cachePrefix?: string;
   },
 ): { url: string; headers: Record<string, string>; body: any } {
   const json = { "Content-Type": "application/json" };
   const media = (r.media || []).filter((m) => canSee(spec, m.mime));
   const dataUrl = (m: MediaItem) => `data:${m.mime};base64,${m.base64}`;
+  // Claude caches only when asked and only prefixes of ~1,000+ tokens; other vendors cache identical prefixes by themselves.
+  const cacheable =
+    !media.length && !!r.cachePrefix && r.prompt.startsWith(r.cachePrefix) && r.cachePrefix.length > 3500;
   if (spec.api === "anthropic")
     return {
       url: spec.url,
@@ -362,7 +370,12 @@ function buildRequest(
                   ),
                   { type: "text", text: r.prompt },
                 ]
-              : r.prompt,
+              : cacheable
+                ? [
+                    { type: "text", text: r.cachePrefix!, cache_control: { type: "ephemeral" } },
+                    { type: "text", text: r.prompt.slice(r.cachePrefix!.length) },
+                  ]
+                : r.prompt,
           },
         ],
         ...(r.search ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }] } : {}),
@@ -451,7 +464,14 @@ export function extract(spec: ProviderSpec, data: any): Completion {
     const blocks = (data.content || []).filter((x: any) => x.type === "text");
     return {
       text: blocks.map((x: any) => x.text).join(""),
-      usage: { input: data.usage?.input_tokens || 0, output: data.usage?.output_tokens || 0 },
+      usage: {
+        input:
+          (data.usage?.input_tokens || 0) +
+          (data.usage?.cache_read_input_tokens || 0) +
+          (data.usage?.cache_creation_input_tokens || 0),
+        output: data.usage?.output_tokens || 0,
+        cached: data.usage?.cache_read_input_tokens || 0,
+      },
       truncated: data.stop_reason === "max_tokens",
       sources: uniq(blocks.flatMap((b: any) => (b.citations || []).map((c: any) => c.url))),
     };
@@ -460,7 +480,11 @@ export function extract(spec: ProviderSpec, data: any): Completion {
     const parts = (data.output || []).flatMap((x: any) => x.content || []).filter((x: any) => x.type === "output_text");
     return {
       text: data.output_text || parts.map((x: any) => x.text).join("\n"),
-      usage: { input: data.usage?.input_tokens || 0, output: data.usage?.output_tokens || 0 },
+      usage: {
+        input: data.usage?.input_tokens || 0,
+        output: data.usage?.output_tokens || 0,
+        cached: data.usage?.input_tokens_details?.cached_tokens || 0,
+      },
       truncated: data.status === "incomplete",
       sources: uniq(parts.flatMap((p: any) => (p.annotations || []).map((a: any) => a.url))),
     };
@@ -472,6 +496,7 @@ export function extract(spec: ProviderSpec, data: any): Completion {
       usage: {
         input: data.usageMetadata?.promptTokenCount || 0,
         output: data.usageMetadata?.candidatesTokenCount || 0,
+        cached: data.usageMetadata?.cachedContentTokenCount || 0,
       },
       truncated: cand?.finishReason === "MAX_TOKENS",
       sources: uniq((cand?.groundingMetadata?.groundingChunks || []).map((g: any) => g.web?.uri)),
@@ -481,7 +506,11 @@ export function extract(spec: ProviderSpec, data: any): Completion {
   const content = choice?.message?.content;
   return {
     text: Array.isArray(content) ? content.map((c: any) => c.text || "").join("") : content || "",
-    usage: { input: data.usage?.prompt_tokens || 0, output: data.usage?.completion_tokens || 0 },
+    usage: {
+      input: data.usage?.prompt_tokens || 0,
+      output: data.usage?.completion_tokens || 0,
+      cached: data.usage?.prompt_tokens_details?.cached_tokens || data.usage?.prompt_cache_hit_tokens || 0,
+    },
     truncated: choice?.finish_reason === "length",
     sources: uniq([...(data.citations || []), ...(data.search_results || []).map((s: any) => s.url)]),
   };

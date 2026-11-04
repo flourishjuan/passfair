@@ -53,3 +53,47 @@ export const PRO_PITCH = [
 ];
 export const clamp = (tier: Tier, key: "agents" | "debateRounds" | "maxBuildRounds" | "images", v: number) =>
   Math.max(1, Math.min(v, LIMITS[tier][key]));
+
+// How deep the team goes. Standard is the default: one debate round, revisions send only what changes,
+// the second reviewer only checks drafts the first one passed, and no full-text polish pass.
+export type Depth = "quick" | "standard" | "deep";
+export const DEPTH: Record<
+  Depth,
+  {
+    label: string;
+    note: string;
+    debateRounds: number;
+    minRounds: number;
+    maxRounds: number;
+    polish: boolean;
+    saver: { crossOnPassOnly?: boolean; sectionEdits?: boolean };
+  }
+> = {
+  quick: {
+    label: "Quick",
+    note: "Fastest and cheapest: ideas → decision → one draft, reviewed.",
+    debateRounds: 0,
+    minRounds: 1,
+    maxRounds: 2,
+    polish: false,
+    saver: { crossOnPassOnly: true, sectionEdits: true },
+  },
+  standard: {
+    label: "Standard",
+    note: "Recommended: one debate round; revisions change only what's wrong; both reviewers sign off.",
+    debateRounds: 1,
+    minRounds: 1,
+    maxRounds: 3,
+    polish: false,
+    saver: { crossOnPassOnly: true, sectionEdits: true },
+  },
+  deep: {
+    label: "Deep",
+    note: "Most thorough: two debate rounds, a polish pass, both reviewers every round, full rewrites.",
+    debateRounds: 2,
+    minRounds: 2,
+    maxRounds: 4,
+    polish: true,
+    saver: {},
+  },
+};

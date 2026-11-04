@@ -16,7 +16,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Attachment } from "./src/core/material";
 import { lastDeliverable } from "./src/core/orchestrator";
-import { LIMITS } from "./src/core/plan";
+import { DEPTH, type Depth, LIMITS } from "./src/core/plan";
 import { shortName } from "./src/core/providers";
 import { settings as settingsStore } from "./src/store/storage";
 import { fromClipboard, fromLink, pickFiles, pickMedia } from "./src/ui/attach";
@@ -475,6 +475,14 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                 <Chip
                   label={flow === "brainstorm" ? "✦ Brainstorm" : "Build"}
                   onPress={() => st.saveSettings({ flow: flow === "brainstorm" ? "build" : "brainstorm" })}
+                />
+                <Chip
+                  label={DEPTH[st.settings.depth || "standard"].label}
+                  onPress={() => {
+                    const order: Depth[] = ["quick", "standard", "deep"];
+                    const cur = order.indexOf(st.settings.depth || "standard");
+                    st.saveSettings({ depth: order[(cur + 1) % 3] });
+                  }}
                 />
                 <Chip
                   label={noAgents ? "Connect agents" : panelLabel}
