@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 — hotfix 8 (invite friends, free trial, new layout)
+- Invite friends: the gift at the top right opens your invite code, a share button, progress and your rewards. Every 3 friends who enter your code **and finish their first real brief** earn you one free month of Pro, delivered as an App Store offer code / Google Play promo code (up to 12 a year). Downloads, ratings and samples never count. No cash rewards.
+- Invite links (`https://challenge.agentsfair.ai/passfair/i/CODE`, `passfair://invite?code=CODE`) open the app with the code filled in; friends can also type it. The share text says the sender may get a free month.
+- Free trial: when the store offers new subscribers a free trial (set up as a 1-month introductory offer / free-trial phase), the Pro page shows it — "1 month free, then $9.99/month" — and Google Play purchases use the trial offer. Prices are unchanged and always read from the store.
+- Layout: top right is only the invite gift; new brief (✎) moved to the bottom left next to the input; history moved into the ••• page (running brief first, "See all" for the full list); the sample run moved from the home screen to ••• → About → "Watch a sample run".
+- Needs the Passfair invite service (separate package) on challenge.agentsfair.ai. Privacy policy updated for the invite data.
+
 ## 2.0.0 — hotfix 7 (Android)
 - Google Play subscriptions: the purchase now passes the base-plan offer token Play Billing requires; "Manage subscription" opens Google Play's page for Passfair.
 - Photos and videos use Android's system Photo Picker, so the app no longer declares broad media/storage permissions (READ_MEDIA_*, READ/WRITE_EXTERNAL_STORAGE) or SYSTEM_ALERT_WINDOW — Play policy asks apps that only pick files to use the Photo Picker.

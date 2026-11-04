@@ -38,6 +38,16 @@ async function secureDel(k: string) {
   } catch {}
 }
 
+// Anonymous install id for invites: random, kept in the keychain (on iOS it survives reinstalling the app).
+export async function installId(random: () => string): Promise<string> {
+  const k = "passfair.install";
+  const have = await secureGet(k);
+  if (have && /^[a-f0-9]{32,64}$/.test(have)) return have;
+  const id = random();
+  await secureSet(k, id);
+  return id;
+}
+
 export interface Connection {
   provider: ProviderId;
   model: string;
@@ -87,6 +97,8 @@ export interface Settings extends RelaySettings {
   research?: boolean;
   customAgents?: CustomAgent[];
   pro?: { active: boolean; checked: string };
+  /** The referral service was told this install finished its first real brief. */
+  activatedSent?: boolean;
 }
 
 export const settings = {

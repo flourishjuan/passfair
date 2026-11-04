@@ -33,7 +33,16 @@ import {
   verify,
 } from "../core/providers";
 import { createRelayClient } from "../core/relay";
-import { type Connection, type Settings, jobs as jobStore, keys, settings as settingsStore } from "../store/storage";
+import { type ReferralStatus, createReferralClient } from "../core/referral";
+import { Platform } from "react-native";
+import {
+  type Connection,
+  type Settings,
+  installId,
+  jobs as jobStore,
+  keys,
+  settings as settingsStore,
+} from "../store/storage";
 
 export type Toast = (message: string) => void;
 export { autoAssign };
@@ -89,6 +98,33 @@ export function useStudio(toast: Toast, tier: Tier) {
       ),
     );
   }, []);
+
+  /* ---------- invites ---------- */
+  const referral = useMemo(
+    () =>
+      createReferralClient({
+        installId: () => installId(() => Array.from(randomBytes(16), (b) => b.toString(16).padStart(2, "0")).join("")),
+        platform: Platform.OS === "android" ? "android" : "ios",
+      }),
+    [],
+  );
+  const [invites, setInvites] = useState<ReferralStatus | null>(null);
+  const [inviteError, setInviteError] = useState("");
+  const refreshInvites = useCallback(async () => {
+    try {
+      setInvites(await referral.status());
+      setInviteError("");
+    } catch (e: any) {
+      setInviteError(e?.message || "Invites are unavailable right now.");
+    }
+  }, [referral]);
+  const claimInvite = useCallback(
+    async (code: string) => {
+      await referral.claim(code);
+      await refreshInvites();
+    },
+    [referral, refreshInvites],
+  );
 
   const relay = useMemo(
     () =>
@@ -169,6 +205,12 @@ export function useStudio(toast: Toast, tier: Tier) {
           j.current = null;
           upsert({ ...j });
         } else if (j.status === "awaiting_review") {
+          // First real brief finished: tell the invite service once (this is what makes an invite count).
+          if (j.mode === "live" && j.usage.calls > 0 && !settingsRef.current.activatedSent)
+            referral
+              .activate()
+              .then(() => saveSettings({ activatedSent: true }))
+              .catch(() => {});
           const auto = settingsRef.current.autoHandoff || "off";
           if (j.mode === "live" && (auto === "always" || (auto === "approved" && j.outcome === "approved_by_reviewer")))
             await handoff(j.id, true);
@@ -530,5 +572,9 @@ export function useStudio(toast: Toast, tier: Tier) {
     signInOpenRouter,
     handoff,
     resume: run,
+    invites,
+    inviteError,
+    refreshInvites,
+    claimInvite,
   };
 }
