@@ -6,7 +6,9 @@ import { detectKey } from "../core/oauth";
 import { profileFor } from "../core/profiles";
 import type { Job, JobEvent } from "../core/orchestrator";
 import { REPORT_REASONS, type ReportReason, reportText } from "../core/report";
+import { type ReferralStatus, inviteMessage } from "../core/referral";
 import { DEPTH, type Depth, LIMITS, PRO_PITCH, type Tier } from "../core/plan";
+import { proLabel } from "../core/trial";
 import {
   type CustomAgent,
   type ProviderId,
@@ -255,6 +257,11 @@ export function MenuSheet(p: {
   onPro: () => void;
   onRestore: () => void;
   onManage: () => void;
+  onInvite: () => void;
+  jobs: Job[];
+  runningId: string | null;
+  onOpenJob: (id: string) => void;
+  onAllHistory: () => void;
   muse: { pair: () => Promise<unknown>; check: () => Promise<unknown>; unpair: () => Promise<unknown> };
 }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -304,6 +311,26 @@ export function MenuSheet(p: {
   const mine = allProviders().filter((x) => x.custom);
   return (
     <Sheet visible={p.visible} title="Agents & settings" onClose={p.onClose}>
+      <Section title="History">
+        {!p.jobs.length && <Text style={F.small}>Your briefs appear here.</Text>}
+        {[...p.jobs]
+          .sort((a, b) => (a.id === p.runningId ? -1 : b.id === p.runningId ? 1 : 0))
+          .slice(0, 5)
+          .map((j) => (
+            <Pressable key={j.id} onPress={() => p.onOpenJob(j.id)} style={s.histRow}>
+              <Text style={F.head} numberOfLines={1}>
+                {j.mode === "demo" ? "Sample · " : ""}
+                {j.goal}
+              </Text>
+              <Text style={[F.small, j.id === p.runningId && { color: T.passInk }]}>
+                {j.id === p.runningId
+                  ? "Running now"
+                  : `${new Date(j.created).toLocaleDateString()} · ${j.status.replace("_", " ")}`}
+              </Text>
+            </Pressable>
+          ))}
+        {p.jobs.length > 5 && <Btn label={`See all ${p.jobs.length}`} small kind="plain" onPress={p.onAllHistory} />}
+      </Section>
       <Section title="Fastest way in">
         <Btn
           label={orSigned ? "Signed in with OpenRouter ✓ — sign in again" : "Sign in with OpenRouter"}
@@ -516,10 +543,13 @@ export function Paywall(p: {
         </Text>
       </View>
       <View style={{ gap: 10 }}>
+        {!!p.products.find((x) => x.trial) && (
+          <Text style={F.head}>New to Pro? Your first {p.products.find((x) => x.trial)!.trial} is free.</Text>
+        )}
         {p.products.map((x) => (
           <Btn
             key={x.id}
-            label={`${x.period === "yearly" ? "Yearly" : "Monthly"} · ${x.price}`}
+            label={proLabel(x.period, x.price, x.trial)}
             kind={x.period === "yearly" ? "primary" : "soft"}
             disabled={p.busy}
             onPress={() => p.onBuy(x.id)}
@@ -531,6 +561,9 @@ export function Paywall(p: {
           {Platform.OS === "android"
             ? "Payment is charged to your Google Play account. The subscription renews automatically unless cancelled; manage or cancel it in Google Play → Payments & subscriptions."
             : "Payment is charged to your Apple ID. The subscription renews automatically unless cancelled at least 24 hours before the end of the period; manage or cancel it in your App Store account settings."}
+          {p.products.some((x) => x.trial)
+            ? " With a free trial you pay nothing until it ends; cancel before then and you are not charged. After the trial it renews at the price shown."
+            : ""}
         </Text>
         <Row>
           <Btn label="Terms of Use ↗" kind="plain" small onPress={() => Linking.openURL(TERMS)} />
@@ -614,6 +647,117 @@ export function WorkSheet(p: { visible: boolean; onClose: () => void; job: Job |
               ))}
           </Section>
         </>
+      )}
+    </Sheet>
+  );
+}
+
+/* ---------- Invite friends ---------- */
+export function InviteSheet(p: {
+  visible: boolean;
+  onClose: () => void;
+  status: ReferralStatus | null;
+  error: string;
+  prefill: string | null;
+  onRefresh: () => void;
+  onClaim: (code: string) => Promise<void>;
+}) {
+  const st = p.status;
+  const [code, setCode] = useState(p.prefill || "");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [entering, setEntering] = useState(false);
+  const [terms, setTerms] = useState(false);
+  React.useEffect(() => {
+    if (p.visible) p.onRefresh();
+    if (p.prefill) setCode(p.prefill);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.visible, p.prefill]);
+  const wrap = (fn: () => Promise<void>, ok: string) => async () => {
+    setBusy(true);
+    setMsg("");
+    try {
+      await fn();
+      setMsg(ok);
+    } catch (e: any) {
+      setMsg(e?.message || "Failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Sheet visible={p.visible} title="" onClose={p.onClose}>
+      {!st ? (
+        <Text style={[F.small, { textAlign: "center" }]}>{p.error || "Loading…"}</Text>
+      ) : (
+        <View style={{ alignItems: "center", gap: 18, paddingTop: 8 }}>
+          <Text style={[F.head, { textAlign: "center" }]}>Invite {st.perReward} friends, get 1 month free</Text>
+          <Text style={[F.display, { letterSpacing: 4 }]}>{st.code}</Text>
+          <View>
+            <Btn
+              label="Share invite"
+              kind="soft"
+              small
+              onPress={() => Share.share({ message: inviteMessage(st.code), title: "Try Passfair" }).catch(() => {})}
+            />
+          </View>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            {Array.from({ length: st.perReward }, (_, i) => (
+              <Dot key={i} color={i < st.towardNext ? T.sub : T.surface2} size={10} />
+            ))}
+            <Text style={F.small}>
+              {" "}
+              {st.towardNext}/{st.perReward}
+            </Text>
+          </View>
+          {st.rewards.map((r, i) =>
+            r.url ? (
+              <View key={i}>
+                <Btn
+                  label={st.rewards.length > 1 ? `Redeem free month ${i + 1}` : "Redeem free month"}
+                  kind="soft"
+                  small
+                  onPress={() => Linking.openURL(r.url!)}
+                />
+              </View>
+            ) : (
+              <Text key={i} style={F.small}>
+                Free month {st.rewards.length > 1 ? `${i + 1} ` : ""}on its way
+              </Text>
+            ),
+          )}
+          {(entering || !!p.prefill) && !st.usedCode && (
+            <View style={{ alignSelf: "stretch", gap: 10 }}>
+              <Input
+                placeholder="Invite code"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                value={code}
+                onChangeText={setCode}
+              />
+              <Btn
+                label="Use code"
+                small
+                disabled={busy || !code.trim()}
+                onPress={wrap(() => p.onClaim(code.trim()), "Code saved.")}
+              />
+            </View>
+          )}
+          {!!msg && <Text style={[F.small, { color: T.ink }]}>{msg}</Text>}
+          {terms && (
+            <Text style={F.small}>
+              Each reward is an App Store / Google Play code for one free month of Passfair Pro, for you only, no cash
+              value, up to 12 a year. A friend counts once, after entering your code and finishing a first real brief —
+              downloads, ratings and samples don't count; self-referrals and duplicate installs don't count. The
+              programme can change or end; codes already issued stay valid. We keep only your invite code, an anonymous
+              install id and whether a first brief was finished.
+            </Text>
+          )}
+          <Text style={F.small}>
+            {!st.usedCode && !entering && !p.prefill && <Text onPress={() => setEntering(true)}>Have a code? · </Text>}
+            <Text onPress={() => setTerms(!terms)}>Terms</Text>
+          </Text>
+        </View>
       )}
     </Sheet>
   );

@@ -4,12 +4,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { PRO_PRODUCTS, type Tier } from "../core/plan";
+import { offerTokenFor, trialOf } from "../core/trial";
 
 export interface ProProduct {
   id: string;
   period: "monthly" | "yearly";
   price: string;
   title: string;
+  /** Free trial this user can still get, e.g. "1 month" (from the store offer); absent when none. */
+  trial?: string;
 }
 const SKUS = [PRO_PRODUCTS.monthly, PRO_PRODUCTS.yearly];
 
@@ -21,6 +24,18 @@ function iap(): any | null {
   } catch {
     return null;
   }
+}
+
+// The price the subscription renews at (never the trial's $0).
+function regularPrice(p: any): string {
+  if (p.displayPrice && p.displayPrice !== "Free") return p.displayPrice;
+  for (const o of p.subscriptionOffers || []) {
+    const ph = (o?.pricingPhasesAndroid?.pricingPhaseList || []).filter(
+      (x: any) => String(x.priceAmountMicros) !== "0",
+    );
+    if (ph.length) return ph[ph.length - 1].formattedPrice;
+  }
+  return (p.subscriptionOffers || [])[0]?.displayPrice || "";
 }
 
 export function usePro(cached: boolean, onChange: (active: boolean) => void) {
@@ -74,16 +89,25 @@ export function usePro(cached: boolean, onChange: (active: boolean) => void) {
         });
         const list = (await m.fetchProducts({ skus: SKUS, type: "subs" })) || [];
         for (const p of list) {
-          const o = (p.subscriptionOffers || []).find((x: any) => x?.offerTokenAndroid) || null;
-          if (o) offers.current.set(p.id, o.offerTokenAndroid);
+          const t = offerTokenFor(p);
+          if (t) offers.current.set(p.id, t);
+        }
+        // iOS: an introductory offer is only given once per subscription group, so ask the store.
+        let eligible = true;
+        const group = list.find((p: any) => p.subscriptionGroupIdIOS)?.subscriptionGroupIdIOS;
+        if (Platform.OS === "ios" && group && m.isEligibleForIntroOfferIOS) {
+          try {
+            eligible = !!(await m.isEligibleForIntroOfferIOS(group));
+          } catch {}
         }
         setProducts(
           list
             .map((p: any) => ({
               id: p.id,
               period: p.id === PRO_PRODUCTS.yearly ? "yearly" : "monthly",
-              price: p.displayPrice || (p.subscriptionOffers || [])[0]?.displayPrice || "",
+              price: regularPrice(p),
               title: p.title,
+              trial: (eligible && trialOf(p)?.length) || undefined,
             }))
             .sort((a: ProProduct) => (a.period === "monthly" ? -1 : 1)),
         );

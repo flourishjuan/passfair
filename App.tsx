@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -26,7 +27,17 @@ import { Btn, Chip, Row } from "./src/ui/kit";
 import { Logo } from "./src/ui/Logo";
 import { Markdown } from "./src/ui/markdown";
 import { usePro } from "./src/ui/purchases";
-import { HistorySheet, MenuSheet, Paywall, Reader, ReportSheet, TeamSheet, WorkSheet } from "./src/ui/sheets";
+import {
+  HistorySheet,
+  InviteSheet,
+  MenuSheet,
+  Paywall,
+  Reader,
+  ReportSheet,
+  TeamSheet,
+  WorkSheet,
+} from "./src/ui/sheets";
+import { parseInvite } from "./src/core/referral";
 import { F, T, vendorColor } from "./src/ui/theme";
 import { useStudio } from "./src/ui/useStudio";
 
@@ -138,7 +149,25 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
   const st = useStudio(toast, pro.tier);
   saveProRef.current = (active) => st.saveSettings({ pro: { active, checked: new Date().toISOString() } });
 
-  const [sheet, setSheet] = useState<null | "menu" | "team" | "pro" | "history" | "work" | "reader" | "report">(null);
+  const [sheet, setSheet] = useState<
+    null | "menu" | "team" | "pro" | "history" | "work" | "reader" | "report" | "invite"
+  >(null);
+  const [invitePrefill, setInvitePrefill] = useState<string | null>(null);
+  // Opening an invite link (passfair://invite?code=… or the invite web page) shows the code ready to use.
+  useEffect(() => {
+    const open = (url: string | null | undefined) => {
+      const c = parseInvite(url);
+      if (c) {
+        setInvitePrefill(c);
+        setSheet("invite");
+      }
+    };
+    Linking.getInitialURL()
+      .then(open)
+      .catch(() => {});
+    const sub = Linking.addEventListener("url", (e) => open(e.url));
+    return () => sub.remove();
+  }, []);
   const [reportOf, setReportOf] = useState<JobEvent | null>(null);
   const report = (e: JobEvent | null) => {
     setReportOf(e);
@@ -244,14 +273,14 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
             <Text style={styles.dots}>•••</Text>
           </Pressable>
           <Logo busy={running} onPress={() => setSheet("work")} />
-          <View style={[styles.headBtn, { flexDirection: "row", justifyContent: "flex-end", gap: 16 }]}>
-            <Pressable onPress={() => setSheet("history")} hitSlop={10} accessibilityLabel="History">
-              <Text style={styles.icon}>◷</Text>
-            </Pressable>
-            <Pressable onPress={() => st.setJobId(null)} hitSlop={10} accessibilityLabel="New brief">
-              <Text style={styles.icon}>＋</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={() => setSheet("invite")}
+            hitSlop={12}
+            style={[styles.headBtn, { alignItems: "flex-end" }]}
+            accessibilityLabel="Invite friends — earn a free month"
+          >
+            <GiftIcon />
+          </Pressable>
         </View>
 
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
@@ -505,6 +534,18 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
               </ScrollView>
             )}
             <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
+              <Pressable
+                onPress={() => {
+                  st.setJobId(null);
+                  setText("");
+                  setFiles([]);
+                  setExportOpen(false);
+                }}
+                style={({ pressed }) => [styles.send, { backgroundColor: T.surface, opacity: pressed ? 0.6 : 1 }]}
+                accessibilityLabel="New brief"
+              >
+                <Text style={{ color: T.ink, fontSize: 20, fontWeight: "400" }}>{"\u270E\uFE0E"}</Text>
+              </Pressable>
               <TextInput
                 value={text}
                 onChangeText={setText}
@@ -518,7 +559,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     : mode === "cutin"
                       ? "Cut in — the team stops and follows you"
                       : job?.mode === "demo"
-                        ? "Sample finished — tap ＋ at the top right for your own brief"
+                        ? "Sample finished — tap ✎ for your own brief"
                         : "Reply to revise (paste a Muse error too)"
                 }
                 style={[styles.input, { flex: 1 }]}
@@ -562,6 +603,14 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
           onPro={() => setSheet("pro")}
           onRestore={pro.restore}
           onManage={pro.manage}
+          onInvite={() => setSheet("invite")}
+          jobs={st.jobs}
+          runningId={st.runningId}
+          onOpenJob={(id) => {
+            st.setJobId(id);
+            setSheet(null);
+          }}
+          onAllHistory={() => setSheet("history")}
           muse={{
             pair: () => st.relay.pair(),
             check: async () => {
@@ -600,6 +649,15 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
           }}
         />
         <WorkSheet visible={sheet === "work"} onClose={() => setSheet(null)} job={job} running={running} />
+        <InviteSheet
+          visible={sheet === "invite"}
+          onClose={() => setSheet(null)}
+          status={st.invites}
+          error={st.inviteError}
+          prefill={invitePrefill}
+          onRefresh={st.refreshInvites}
+          onClaim={st.claimInvite}
+        />
         <ReportSheet
           visible={sheet === "report"}
           onClose={() => setSheet(null)}
@@ -618,6 +676,22 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
   );
 }
 
+// Line-drawn gift (lid, box, ribbon, bow) so it matches the ••• and logo instead of a colour emoji.
+function GiftIcon() {
+  const line = { borderColor: T.ink, borderWidth: 1.6 } as const;
+  return (
+    <View style={{ width: 24, height: 24, alignItems: "center", justifyContent: "flex-end" }}>
+      <View style={{ position: "absolute", top: 1, flexDirection: "row", gap: 2 }}>
+        <View style={[line, { width: 7, height: 6, borderRadius: 4, transform: [{ rotate: "-25deg" }] }]} />
+        <View style={[line, { width: 7, height: 6, borderRadius: 4, transform: [{ rotate: "25deg" }] }]} />
+      </View>
+      <View style={[line, { width: 22, height: 6, borderRadius: 2, marginBottom: 1 }]} />
+      <View style={[line, { width: 18, height: 11, borderRadius: 2, borderTopWidth: 0 }]} />
+      <View style={{ position: "absolute", bottom: 0, top: 7, width: 1.6, backgroundColor: T.ink }} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.bg },
   header: {
@@ -629,7 +703,6 @@ const styles = StyleSheet.create({
   },
   headBtn: { width: 76, height: 44, justifyContent: "center" },
   dots: { fontSize: 18, letterSpacing: 1, color: T.ink },
-  icon: { fontSize: 22, color: T.ink },
   feed: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 28 },
   card: { backgroundColor: T.surface, borderRadius: T.radius, padding: 16, gap: 4 },
   brief: {
