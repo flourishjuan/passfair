@@ -67,10 +67,10 @@ test("agents sharing one key take turns; agents on different keys run together",
     }
     await new Promise((r) => setTimeout(r, 5));
     if (shared) live--;
-    const sys = JSON.stringify(JSON.parse(init.body).messages?.[0] || JSON.parse(init.body).system || "");
-    const text = /REVIEWER/.test(sys)
+    const sys = JSON.stringify(JSON.parse(init.body));
+    const text = /Your role: REVIEWER/.test(sys)
       ? `{"verdict":"pass","score":9,"summary":"ok","criteria":[{"id":"C1","met":true,"evidence":"Buyer: export managers"}],"issues":[]}`
-      : /FRAMER/.test(sys)
+      : /Your role: FRAMER/.test(sys)
         ? "C1. names the buyer\nDOMAINS: Chess; Opera; Rally"
         : "Buyer: export managers. ".repeat(30);
     return url.includes("anthropic.com")

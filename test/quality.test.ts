@@ -39,12 +39,12 @@ function scripted(worker: (n: number, prompt: string) => string, reviews: string
   const seen: string[] = [];
   const fetcher = async (_url: any, init: any) => {
     const body = JSON.parse(init.body);
-    const sys = JSON.stringify(body.system || "");
+    const sys = JSON.stringify(body);
     const prompt = JSON.stringify(body.messages || "");
     seen.push(prompt);
-    const text = /REVIEWER/.test(sys)
+    const text = /Your role: REVIEWER/.test(sys)
       ? reviews.shift() || PASS
-      : /PLANNER/.test(sys)
+      : /Your role: PLANNER/.test(sys)
         ? "C1. names the buyer"
         : worker(++n, prompt);
     return new Response(

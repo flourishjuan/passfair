@@ -220,12 +220,12 @@ function scripted(verdicts: string[]) {
   let n = 0;
   return async (_url: any, init: any) => {
     const body = JSON.parse(init.body);
-    const sys = JSON.stringify(body.system || body.messages?.[0] || "");
-    const isReview = /REVIEWER/.test(sys);
+    const sys = JSON.stringify(body);
+    const isReview = /Your role: REVIEWER/.test(sys);
     const prompt = JSON.stringify(body.messages || "");
     const text = isReview
       ? verdicts.shift()!
-      : /PLANNER/.test(sys)
+      : /Your role: PLANNER/.test(sys)
         ? "plan\nC1. covers the spec"
         : /ISSUES FROM|FEEDBACK REPORTED|NEW INSTRUCTION/.test(prompt)
           ? `draft ${++n}\n=== REVISION NOTES ===\nI1: fixed`

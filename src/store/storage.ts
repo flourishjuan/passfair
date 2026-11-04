@@ -80,6 +80,7 @@ export interface Settings extends RelaySettings {
   autoHandoff?: "off" | "approved" | "always";
   seenWelcome?: boolean;
   flow?: "brainstorm" | "build";
+  depth?: "quick" | "standard" | "deep";
   /** Agents chosen for the panel, in seat order. Empty = all connected, up to the plan limit. */
   panel?: ProviderId[];
   debateRounds?: number;
