@@ -26,6 +26,7 @@ function iap(): any | null {
 export function usePro(cached: boolean, onChange: (active: boolean) => void) {
   const [tier, setTier] = useState<Tier>(cached ? "pro" : "free");
   const [products, setProducts] = useState<ProProduct[]>([]);
+  const offers = useRef(new Map<string, string>()); // Google Play: product id → offer token
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const ready = useRef(false);
@@ -49,7 +50,7 @@ export function usePro(cached: boolean, onChange: (active: boolean) => void) {
   useEffect(() => {
     const m = iap();
     if (!m) {
-      setNote("Pro is purchased in the iPhone app.");
+      setNote("Pro is purchased in the iPhone or Android app.");
       return;
     }
     let up: { remove: () => void } | undefined;
@@ -72,12 +73,16 @@ export function usePro(cached: boolean, onChange: (active: boolean) => void) {
           if (e?.code !== "user-cancelled" && e?.code !== "E_USER_CANCELLED") setNote(e?.message || "Purchase failed.");
         });
         const list = (await m.fetchProducts({ skus: SKUS, type: "subs" })) || [];
+        for (const p of list) {
+          const o = (p.subscriptionOffers || []).find((x: any) => x?.offerTokenAndroid) || null;
+          if (o) offers.current.set(p.id, o.offerTokenAndroid);
+        }
         setProducts(
           list
             .map((p: any) => ({
               id: p.id,
               period: p.id === PRO_PRODUCTS.yearly ? "yearly" : "monthly",
-              price: p.displayPrice,
+              price: p.displayPrice || (p.subscriptionOffers || [])[0]?.displayPrice || "",
               title: p.title,
             }))
             .sort((a: ProProduct) => (a.period === "monthly" ? -1 : 1)),
@@ -103,7 +108,14 @@ export function usePro(cached: boolean, onChange: (active: boolean) => void) {
     setBusy(true);
     setNote("");
     try {
-      await m.requestPurchase({ request: { apple: { sku: id }, google: { skus: [id] } }, type: "subs" });
+      const token = offers.current.get(id);
+      await m.requestPurchase({
+        request: {
+          apple: { sku: id },
+          google: { skus: [id], ...(token ? { subscriptionOffers: [{ sku: id, offerToken: token }] } : {}) },
+        },
+        type: "subs",
+      });
     } catch (e: any) {
       setBusy(false);
       setNote(e?.message || "Purchase failed.");
@@ -127,7 +139,10 @@ export function usePro(cached: boolean, onChange: (active: boolean) => void) {
   }, [set]);
   const manage = useCallback(async () => {
     try {
-      await iap()?.deepLinkToSubscriptions({});
+      await iap()?.deepLinkToSubscriptions({
+        packageNameAndroid: "ai.agentsfair.passfair",
+        skuAndroid: PRO_PRODUCTS.monthly,
+      });
     } catch {}
   }, []);
 

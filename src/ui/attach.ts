@@ -48,9 +48,12 @@ export async function pickFiles(): Promise<Attachment[]> {
 }
 
 export async function pickMedia(camera = false): Promise<Attachment[]> {
+  // Android uses the system Photo Picker, which needs no permission; iOS asks once for the library.
   const perm = camera
     ? await ImagePicker.requestCameraPermissionsAsync()
-    : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    : Platform.OS === "android"
+      ? { granted: true }
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) throw new Error(camera ? "Allow camera access in Settings." : "Allow photo access in Settings.");
   const opts: ImagePicker.ImagePickerOptions = {
     mediaTypes: ["images", "videos"],

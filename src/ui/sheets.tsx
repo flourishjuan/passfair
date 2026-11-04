@@ -1,10 +1,11 @@
 import * as Clipboard from "expo-clipboard";
 import React, { useState } from "react";
-import { Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
 import { seatName } from "../core/brainstorm";
 import { detectKey } from "../core/oauth";
 import { profileFor } from "../core/profiles";
-import type { Job } from "../core/orchestrator";
+import type { Job, JobEvent } from "../core/orchestrator";
+import { REPORT_REASONS, type ReportReason, reportText } from "../core/report";
 import { DEPTH, type Depth, LIMITS, PRO_PITCH, type Tier } from "../core/plan";
 import {
   type CustomAgent,
@@ -527,8 +528,9 @@ export function Paywall(p: {
         {!!p.note && <Text style={F.small}>{p.note}</Text>}
         <Btn label="Restore purchases" kind="plain" disabled={p.busy} onPress={p.onRestore} />
         <Text style={F.small}>
-          Payment is charged to your Apple ID. The subscription renews automatically unless cancelled at least 24 hours
-          before the end of the period; manage or cancel it in your App Store account settings.
+          {Platform.OS === "android"
+            ? "Payment is charged to your Google Play account. The subscription renews automatically unless cancelled; manage or cancel it in Google Play → Payments & subscriptions."
+            : "Payment is charged to your Apple ID. The subscription renews automatically unless cancelled at least 24 hours before the end of the period; manage or cancel it in your App Store account settings."}
         </Text>
         <Row>
           <Btn label="Terms of Use ↗" kind="plain" small onPress={() => Linking.openURL(TERMS)} />
@@ -613,6 +615,47 @@ export function WorkSheet(p: { visible: boolean; onClose: () => void; job: Job |
           </Section>
         </>
       )}
+    </Sheet>
+  );
+}
+
+/* ---------- Report AI-generated content ---------- */
+export function ReportSheet(p: {
+  visible: boolean;
+  onClose: () => void;
+  job: Job | null;
+  event: JobEvent | null;
+  onSent: () => void;
+}) {
+  const [reason, setReason] = useState<ReportReason>("offensive");
+  const [note, setNote] = useState("");
+  if (!p.job) return null;
+  return (
+    <Sheet visible={p.visible} title="Report content" onClose={p.onClose}>
+      <Text style={F.body}>
+        Tell us what is wrong with this AI-generated content. The report includes an excerpt and which agent wrote it.
+      </Text>
+      <Section title="Reason">
+        <Row>
+          {REPORT_REASONS.map((r) => (
+            <Chip key={r.id} label={r.label} on={reason === r.id} onPress={() => setReason(r.id)} />
+          ))}
+        </Row>
+      </Section>
+      <Section title="Anything else (optional)">
+        <Input value={note} onChangeText={setNote} multiline placeholder="What happened?" style={{ minHeight: 90 }} />
+      </Section>
+      <Btn
+        label="Send report"
+        kind="primary"
+        onPress={async () => {
+          const text = reportText(p.job!, p.event, reason, note, "2.0.0");
+          await Share.share({ message: text, title: "Passfair content report" }).catch(() => {});
+          setNote("");
+          p.onSent();
+          p.onClose();
+        }}
+      />
     </Sheet>
   );
 }
