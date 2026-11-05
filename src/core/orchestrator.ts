@@ -89,9 +89,17 @@ export interface Criterion {
   met: boolean;
   evidence: string;
 }
+export interface Axes {
+  accuracy: number; // every claim and number matches the material, research or a stated estimate
+  clarity: number; // the user can follow the answer and the reasoning
+  completeness: number; // everything the brief asked for is answered
+}
+export const AXIS_PASS = 7;
 export interface Review {
   verdict: "pass" | "revise";
   score: number | null;
+  /** Three separate grades, 0–10; all three must be 7 or more to pass. */
+  axes?: Axes;
   summary: string;
   issues: Issue[];
   criteria?: Criterion[];
@@ -212,8 +220,8 @@ ${DELIVERABLE_RULES} Improve expression, tone, clarity, formatting and audience 
   reviewer: `${COMMON}
 Your role: REVIEWER. You are independent and strict. Check the deliverable against the brief, the plan's acceptance criteria and the supplied material: factual errors, unsupported claims, contradictions, missing requirements, broken structure, wrong language, unsafe or impractical advice. Always assess design and structure as its own category — organisation, section order and flow, formatting consistency; for code, architecture, interfaces and naming — and report problems in that category as issues even when every fact is correct. If deployment or publishing feedback is present, verify it has been addressed.
 Respond with ONLY a JSON object, no prose before or after, in this exact shape:
-{"verdict":"pass"|"revise","score":0-10,"summary":"one or two sentences","criteria":[{"id":"C1","met":true|false,"evidence":"short quote from the deliverable that satisfies it, or empty"}],"issues":[{"severity":"high"|"medium"|"low","where":"section or quote","problem":"what is wrong","fix":"what to change"}],"assumptions":["each unverified assumption the deliverable relies on"]}
-Check EVERY acceptance criterion from the plan in "criteria"; a criterion is met only if you can quote concrete evidence from the deliverable. Always check LOGIC as its own category: does each conclusion follow from the reasons given, are rankings backed by stated criteria, does any part contradict another. Report as HIGH issues: internal ids (A-1, B-H2, C3, I2) or agent names in the deliverable; numbers given without a source or an "estimate:" reason; a conclusion or ranking with no reasons; placeholder or template text; generic content that would fit any company or brief; a recommendation missing the specifics the brief asks for (who, what, price, numbers, dates, stop conditions); handing the work back to the user ("confirm with…", "research…") instead of committing to a stated assumption; revision notes that claim a fix the deliverable does not show.
+{"verdict":"pass"|"revise","score":0-10,"axes":{"accuracy":0-10,"clarity":0-10,"completeness":0-10},"summary":"one or two sentences","criteria":[{"id":"C1","met":true|false,"evidence":"short quote from the deliverable that satisfies it, or empty"}],"issues":[{"severity":"high"|"medium"|"low","where":"section or quote","problem":"what is wrong","fix":"what to change"}],"assumptions":["each unverified assumption the deliverable relies on"]}
+Check EVERY acceptance criterion from the plan in "criteria"; a criterion is met only if you can quote concrete evidence from the deliverable. Grade three axes separately, 0–10, in "axes": ACCURACY (every claim and number matches the material, the research notes and their sources, or is marked as an estimate with a reason), CLARITY (the user can follow the answer and the reasoning), COMPLETENESS (everything the brief asked for is answered). Any axis below 7 means "revise". Always check LOGIC as its own category: does each conclusion follow from the reasons given, are rankings backed by stated criteria, does any part contradict another. Report as HIGH issues: internal ids (A-1, B-H2, C3, I2) or agent names in the deliverable; numbers given without a source or an "estimate:" reason; a conclusion or ranking with no reasons; placeholder or template text; generic content that would fit any company or brief; a recommendation missing the specifics the brief asks for (who, what, price, numbers, dates, stop conditions); handing the work back to the user ("confirm with…", "research…") instead of committing to a stated assumption; revision notes that claim a fix the deliverable does not show.
 Use "pass" only when there are no high or medium issues and the deliverable genuinely merits a score of 8 or higher; a score below 8 is always "revise", never "pass". Be concrete; vague feedback is useless to the Worker.`,
   verifier: "",
 };
@@ -259,7 +267,7 @@ export function headFor(job: Job): string {
     media
       ? `\n\nNOTES ON THE ATTACHED FILES (written by ${media.model}, the agent that could see them):\n${media.text}`
       : ""
-  }${research ? `\n\nRESEARCH NOTES (live web search — check the sources):\n${research.text}` : ""}`;
+  }${research ? `\n\nRESEARCH NOTES (live web search — check the sources; points under "WHERE SOURCES DISAGREE" are uncertain and must not be stated as fact):\n${research.text}` : ""}`;
 }
 export const planLabel = (job: Job) =>
   job.events.some((e) => e.role === "decider" && !e.failed) ? "DECISION FROM THE TEAM BRAINSTORM" : "PLAN FROM PLANNER";
@@ -552,9 +560,23 @@ export function parseReview(text: string, requireCriteria = false): Review {
   const serious = issues.some((i) => i.severity !== "low");
   const unmet = criteria.some((c) => !c.met);
   const score = Number.isFinite(Number(data.score)) ? Math.max(0, Math.min(10, Number(data.score))) : null;
+  const grade = (v: any) => (Number.isFinite(Number(v)) ? Math.max(0, Math.min(10, Number(v))) : null);
+  const a = data.axes && typeof data.axes === "object" ? data.axes : {};
+  const [acc, cla, com] = [grade(a.accuracy), grade(a.clarity), grade(a.completeness)];
+  const axes =
+    acc !== null && cla !== null && com !== null ? { accuracy: acc, clarity: cla, completeness: com } : undefined;
+  const lowAxis = !!axes && Math.min(axes.accuracy, axes.clarity, axes.completeness) < AXIS_PASS;
   return {
-    verdict: data.verdict === "pass" && !serious && !unmet && !(score !== null && score < 8) ? "pass" : "revise",
+    verdict:
+      data.verdict === "pass" &&
+      !serious &&
+      !unmet &&
+      !lowAxis &&
+      !(score !== null && score < 8)
+        ? "pass"
+        : "revise",
     score,
+    ...(axes ? { axes } : {}),
     summary: String(data.summary || "").slice(0, 1000),
     issues,
     criteria,
@@ -645,8 +667,8 @@ export function demoOutput(job: Job, role: Role, round: number): string {
         : `${DEMO_BS_DRAFT}\n${NOTES_MARK}\nI1: added the arithmetic to 100 repeat customers ("≈ 108 repeat customers by day 42").`;
     if (role === "polisher") return lastDeliverable(job);
     if (round === 1)
-      return `{"verdict":"revise","score":6,"summary":"${role === "verifier" ? "Cross-check: " : ""}No arithmetic showing how the plan reaches 100 repeat customers.","criteria":${crit([false, true, true, true], ev)},"issues":[{"severity":"high","where":"whole plan","problem":"C1 needs the math to 100.","fix":"Show the funnel numbers."}]}`;
-    return `{"verdict":"pass","score":9,"summary":"${role === "verifier" ? "Cross-check: " : ""}All four criteria met with quoted evidence.","criteria":${crit([true, true, true, true], ev)},"issues":[],"assumptions":["45% of texted buyers start a streak.","15% repeat rate today."]}`;
+      return `{"verdict":"revise","score":6,"axes":{"accuracy":6,"clarity":8,"completeness":7},"summary":"${role === "verifier" ? "Cross-check: " : ""}No arithmetic showing how the plan reaches 100 repeat customers.","criteria":${crit([false, true, true, true], ev)},"issues":[{"severity":"high","where":"whole plan","problem":"C1 needs the math to 100.","fix":"Show the funnel numbers."}]}`;
+    return `{"verdict":"pass","score":9,"axes":{"accuracy":9,"clarity":9,"completeness":8},"summary":"${role === "verifier" ? "Cross-check: " : ""}All four criteria met with quoted evidence.","criteria":${crit([true, true, true, true], ev)},"issues":[],"assumptions":["45% of texted buyers start a streak.","15% repeat rate today."]}`;
   }
   if (role === "planner") return DEMO_PLAN;
   if (role === "worker") {
@@ -664,12 +686,12 @@ export function demoOutput(job: Job, role: Role, round: number): string {
     "introduce yourself today",
   ];
   if (fb && fb.round >= round - 1)
-    return `{"verdict":"pass","score":9,"summary":"The reported problem from ${fb.source} is addressed.","criteria":${crit([true, true, true, true], ev)},"issues":[]}`;
+    return `{"verdict":"pass","score":9,"axes":{"accuracy":9,"clarity":9,"completeness":8},"summary":"The reported problem from ${fb.source} is addressed.","criteria":${crit([true, true, true, true], ev)},"issues":[]}`;
   if (round === 1)
     return role === "verifier"
       ? `{"verdict":"revise","score":5,"summary":"Cross-check: the tip is too vague to act on and there is no next step.","criteria":${crit([true, false, true, false], ev)},"issues":[{"severity":"high","where":"Tip","problem":"'Get involved and learn' is not something a new member can do today.","fix":"Give one concrete action."},{"severity":"medium","where":"Ending","problem":"No clear next action.","fix":"End with one."}]}`
       : `{"verdict":"revise","score":4,"summary":"Invents a member count and the tip is generic.","criteria":${crit([true, false, false, false], ev)},"issues":[{"severity":"high","where":"'over 10,000 AI builders'","problem":"Not in the brief — an invented fact.","fix":"Remove it."},{"severity":"high","where":"Tip","problem":"Generic advice that would fit any community.","fix":"One specific first-week action."}]}`;
-  return `{"verdict":"pass","score":9,"summary":"${role === "verifier" ? "Cross-check: " : ""}every criterion is met with quoted evidence; the revision notes match the text.","criteria":${crit([true, true, true, true], ev)},"issues":[],"assumptions":["Assumes the community has a show-and-tell channel."]}`;
+  return `{"verdict":"pass","score":9,"axes":{"accuracy":9,"clarity":9,"completeness":8},"summary":"${role === "verifier" ? "Cross-check: " : ""}every criterion is met with quoted evidence; the revision notes match the text.","criteria":${crit([true, true, true, true], ev)},"issues":[],"assumptions":["Assumes the community has a show-and-tell channel."]}`;
 }
 
 export interface Credential {
@@ -1079,6 +1101,24 @@ export function deliverableOf(job: Job, round: number): string {
     [...job.events].reverse().find((e) => (e.role === "polisher" || e.role === "worker") && e.round === round)?.text ||
     ""
   );
+}
+
+/** The final round's grades (lowest across reviewers) and how many revisions it took, for the result header. */
+export function qualityOf(job: Job): (Axes & { revisions: number }) | null {
+  const fr = job.finalRound;
+  if (!fr) return null;
+  const axes = job.events
+    .filter((e) => e.round === fr && (e.role === "reviewer" || e.role === "verifier") && e.review?.axes)
+    .map((e) => e.review!.axes!);
+  if (!axes.length) return null;
+  const low = (k: keyof Axes) => Math.min(...axes.map((a) => a[k]));
+  const fb = lastOf(job, (e) => e.role === "feedback");
+  return {
+    accuracy: low("accuracy"),
+    clarity: low("clarity"),
+    completeness: low("completeness"),
+    revisions: Math.max(0, fr - 1 - (fb ? fb.round : 0)),
+  };
 }
 
 // Best round since the last outside feedback: fully passed beats not passed, then higher lowest-score, then later.

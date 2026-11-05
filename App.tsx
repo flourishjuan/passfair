@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Attachment } from "./src/core/material";
-import { type JobEvent, lastDeliverable } from "./src/core/orchestrator";
+import { type JobEvent, lastDeliverable, qualityOf } from "./src/core/orchestrator";
 import { DEPTH, type Depth, LIMITS } from "./src/core/plan";
 import { shortName } from "./src/core/providers";
 import { settings as settingsStore } from "./src/store/storage";
@@ -352,6 +352,16 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                                 : "Stopped"
                       ).toUpperCase()}
                     </Text>
+                    {job.mode === "live" &&
+                      ((q) =>
+                        q ? (
+                          <Text style={F.small}>
+                            Accuracy {q.accuracy} · Clarity {q.clarity} · Completeness {q.completeness} ·{" "}
+                            {q.revisions === 0
+                              ? "no revisions"
+                              : `${q.revisions} revision${q.revisions > 1 ? "s" : ""}`}
+                          </Text>
+                        ) : null)(qualityOf(job))}
                     {(job.final || lastDeliverable(job)) && <Markdown text={job.final || lastDeliverable(job)} />}
                     {job.mode === "live" && <RunFacts job={job} />}
                     {job.status === "stopped" && (

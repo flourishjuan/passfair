@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.0 — hotfix 12 (graded reviews, disputed facts)
+- Reviewers grade accuracy (checked against the material and research sources), clarity and completeness, 0–10 each; a draft passes only if all three are 7 or more. The result shows "Accuracy 8 · Clarity 9 · Completeness 7 · 1 revision".
+- Web research ends with "where sources disagree"; every agent is told those points are uncertain and must not be stated as fact.
+
 ## 2.0.0 — hotfix 11 (team notebook)
 - Team notebook (Pro), after Karpathy's "LLM Wiki": when you approve a result (or hand it off), one of your agents files its decisions, facts with sources, the people/products/customers involved and open questions into short pages on your phone. Each new brief starts with the few pages that matter for it ("Building on 3 notebook pages: …"), so the team builds on what you already settled instead of re-deciding it. When a new result changes an earlier decision, the conversation says what changed.
 - ••• → Team notebook: read, delete, export as Markdown (for Obsidian, Notes or Muse) or clear. Kept on the phone only; free plan shows it locked.

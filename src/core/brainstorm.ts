@@ -62,7 +62,7 @@ const block = (title: string, evs: JobEvent[], job: Job) =>
 
 export const BS_SYSTEM = {
   seer: `Your role: EYES of the team. You are the only agent who can see the attached files (images, PDFs, video, audio). Describe them so other agents, who cannot see them, can work from your notes: every readable text verbatim (numbers, names, prices, dates), what is shown, layout, quality problems, anything relevant to the brief. Mark what you infer as inference. Use headings per file. Do not solve the brief.`,
-  researcher: `Your role: RESEARCHER. You have live web search. Collect the facts the brief depends on: market size signals, competitors and their prices, regulations, recent news, comparable cases. Every fact gets its source URL and date. Separate "verified (source)" from "unclear". No recommendations. 400–700 words.`,
+  researcher: `Your role: RESEARCHER. You have live web search. Collect the facts the brief depends on: market size signals, competitors and their prices, regulations, recent news, comparable cases. Every fact gets its source URL and date. Separate "verified (source)" from "unclear". End with a section "WHERE SOURCES DISAGREE": each point on which sources conflict, what each side says, with both sources — the team must treat these as uncertain, not as fact. No recommendations. 400–700 words.`,
   framer: (n: number) =>
     `Your role: FRAMER of a live brainstorm between ${n} AI agents from different vendors. Do not answer the brief. Output markdown:
 ## The real question — one sentence.
