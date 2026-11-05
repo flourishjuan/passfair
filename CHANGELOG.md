@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.0 — hotfix 11 (team notebook)
+- Team notebook (Pro), after Karpathy's "LLM Wiki": when you approve a result (or hand it off), one of your agents files its decisions, facts with sources, the people/products/customers involved and open questions into short pages on your phone. Each new brief starts with the few pages that matter for it ("Building on 3 notebook pages: …"), so the team builds on what you already settled instead of re-deciding it. When a new result changes an earlier decision, the conversation says what changed.
+- ••• → Team notebook: read, delete, export as Markdown (for Obsidian, Notes or Muse) or clear. Kept on the phone only; free plan shows it locked.
+
 ## 2.0.0 — hotfix 10 (live writing, clearer answers, faster)
 - Live writing: every agent's words appear as it writes them (Claude, GPT, Gemini and the OpenAI-compatible agents); reviews appear when complete. The sample run types itself out too.
 - Clearer answers: the deliverable never shows the team's internal ids (A-1, B-H2 …) — the automatic check sends it back if it does; every number states its source or "estimate:" and why; recommendations, choices and rankings are written answer first → criteria → reasons and evidence → risks and next steps; about 800 words unless the brief asks for more.

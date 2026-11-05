@@ -5,6 +5,7 @@ import { seatName } from "../core/brainstorm";
 import { detectKey } from "../core/oauth";
 import { profileFor } from "../core/profiles";
 import type { Job, JobEvent } from "../core/orchestrator";
+import type { NoteKind, Notebook } from "../core/notebook";
 import { REPORT_REASONS, type ReportReason, reportText } from "../core/report";
 import { type ReferralStatus, inviteMessage } from "../core/referral";
 import { DEPTH, type Depth, LIMITS, PRO_PITCH, type Tier } from "../core/plan";
@@ -263,6 +264,8 @@ export function MenuSheet(p: {
   onOpenJob: (id: string) => void;
   onAllHistory: () => void;
   onSample: () => void;
+  notebookPages: number;
+  onNotebook: () => void;
   muse: { pair: () => Promise<unknown>; check: () => Promise<unknown>; unpair: () => Promise<unknown> };
 }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -331,6 +334,21 @@ export function MenuSheet(p: {
             </Pressable>
           ))}
         {p.jobs.length > 5 && <Btn label={`See all ${p.jobs.length}`} small kind="plain" onPress={p.onAllHistory} />}
+      </Section>
+      <Section title="Team notebook">
+        {LIMITS[p.tier].notebook ? (
+          <Pressable onPress={p.onNotebook} style={s.histRow}>
+            <Text style={F.head}>
+              {p.notebookPages ? `${p.notebookPages} page${p.notebookPages > 1 ? "s" : ""}` : "Empty so far"}
+            </Text>
+            <Text style={F.small}>What the team remembers from work you approved.</Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={p.onPro} style={[s.histRow, { opacity: 0.5 }]}>
+            <Text style={F.head}>🔒 Team notebook</Text>
+            <Text style={F.small}>Agents remember what you already decided. Pro.</Text>
+          </Pressable>
+        )}
       </Section>
       <Section title="Fastest way in">
         <Btn
@@ -572,6 +590,85 @@ export function Paywall(p: {
           <Btn label="Privacy ↗" kind="plain" small onPress={() => Linking.openURL(PRIVACY)} />
         </Row>
       </View>
+    </Sheet>
+  );
+}
+
+/* ---------- Team notebook ---------- */
+const KIND_TITLE: Record<NoteKind, string> = {
+  decision: "Decisions",
+  fact: "Facts",
+  entity: "People, products & companies",
+  question: "Open questions",
+};
+export function NotebookSheet(p: {
+  visible: boolean;
+  onClose: () => void;
+  notebook: Notebook;
+  onRemove: (id: string) => void;
+  onClear: () => void;
+  markdown: () => string;
+}) {
+  const [open, setOpen] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const kinds: NoteKind[] = ["decision", "fact", "entity", "question"];
+  return (
+    <Sheet visible={p.visible} title="Team notebook" onClose={p.onClose}>
+      {!p.notebook.pages.length ? (
+        <Text style={F.small}>
+          When you approve a result, the key decisions and facts are filed here, and the next brief starts from them.
+        </Text>
+      ) : (
+        kinds.map((k) => {
+          const ps = p.notebook.pages.filter((x) => x.kind === k);
+          if (!ps.length) return null;
+          return (
+            <Section key={k} title={KIND_TITLE[k]}>
+              {ps.map((x) => (
+                <Pressable key={x.id} onPress={() => setOpen(open === x.id ? null : x.id)} style={s.histRow}>
+                  <Text style={F.head}>{x.title}</Text>
+                  {open === x.id ? (
+                    <View style={{ gap: 6 }}>
+                      <Markdown text={x.body} />
+                      <Text style={F.small}>
+                        {x.updated.slice(0, 10)} · from "{x.sources[x.sources.length - 1]?.brief.slice(0, 60)}"
+                      </Text>
+                      <View style={{ flexDirection: "row" }}>
+                        <Btn label="Delete" small kind="plain" onPress={() => p.onRemove(x.id)} />
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={F.small} numberOfLines={1}>
+                      {x.body.replace(/\s+/g, " ")}
+                    </Text>
+                  )}
+                </Pressable>
+              ))}
+            </Section>
+          );
+        })
+      )}
+      {!!p.notebook.pages.length && (
+        <View style={{ flexDirection: "row", gap: 10, flexWrap: "wrap" }}>
+          <Btn
+            label="Export as Markdown"
+            small
+            kind="soft"
+            onPress={() => Share.share({ message: p.markdown(), title: "Passfair team notebook" }).catch(() => {})}
+          />
+          <Btn
+            label={confirm ? "Tap again to clear everything" : "Clear notebook"}
+            small
+            kind="plain"
+            onPress={() => {
+              if (!confirm) return setConfirm(true);
+              setConfirm(false);
+              p.onClear();
+            }}
+          />
+        </View>
+      )}
+      <Text style={F.small}>Kept on this phone only. Each page shows which approved brief it came from.</Text>
     </Sheet>
   );
 }

@@ -29,6 +29,7 @@ import { Markdown } from "./src/ui/markdown";
 import { usePro } from "./src/ui/purchases";
 import {
   HistorySheet,
+  NotebookSheet,
   InviteSheet,
   MenuSheet,
   Paywall,
@@ -150,7 +151,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
   saveProRef.current = (active) => st.saveSettings({ pro: { active, checked: new Date().toISOString() } });
 
   const [sheet, setSheet] = useState<
-    null | "menu" | "team" | "pro" | "history" | "work" | "reader" | "report" | "invite"
+    null | "menu" | "team" | "pro" | "history" | "work" | "reader" | "report" | "invite" | "notebook"
   >(null);
   const [invitePrefill, setInvitePrefill] = useState<string | null>(null);
   // Opening an invite link (passfair://invite?code=… or the invite web page) shows the code ready to use.
@@ -606,6 +607,8 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
             setSheet(null);
           }}
           onAllHistory={() => setSheet("history")}
+          notebookPages={st.notebook.pages.length}
+          onNotebook={() => setSheet("notebook")}
           onSample={() => {
             setSheet(null);
             st.start("", { demo: true }).catch((e: any) => toast(e?.message || "Failed."));
@@ -646,6 +649,14 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
             st.setJobId(id);
             setSheet(null);
           }}
+        />
+        <NotebookSheet
+          visible={sheet === "notebook"}
+          onClose={() => setSheet(null)}
+          notebook={st.notebook}
+          onRemove={st.removeNote}
+          onClear={st.clearNotebook}
+          markdown={st.notebookMarkdown}
         />
         <WorkSheet visible={sheet === "work"} onClose={() => setSheet(null)} job={job} running={running} />
         <InviteSheet

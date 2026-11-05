@@ -11,6 +11,7 @@ export interface Limits {
   pdf: boolean;
   office: boolean; // Word / Excel / PowerPoint uploads
   video: boolean;
+  notebook: boolean; // team notebook: approved work carried into future briefs
   exports: ("md" | "pdf" | "docx" | "pptx" | "record")[];
 }
 export const LIMITS: Record<Tier, Limits> = {
@@ -24,6 +25,7 @@ export const LIMITS: Record<Tier, Limits> = {
     pdf: false,
     office: false,
     video: false,
+    notebook: false,
     exports: ["md", "pdf"],
   },
   pro: {
@@ -36,6 +38,7 @@ export const LIMITS: Record<Tier, Limits> = {
     pdf: true,
     office: true,
     video: true,
+    notebook: true,
     exports: ["md", "pdf", "docx", "pptx", "record"],
   },
 };
@@ -47,6 +50,7 @@ export const PRO_PITCH = [
   "Up to 6 agents on one brainstorm",
   "Up to 4 debate rounds and 8 review rounds",
   "Live web research before the team starts",
+  "Team notebook: agents remember what you already decided",
   "Your own custom agents (any OpenAI- or Anthropic-compatible API)",
   "PDF, Word, Excel, PowerPoint and video uploads",
   "Export to Word, PowerPoint and the full record",

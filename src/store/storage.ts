@@ -2,6 +2,7 @@
 // AsyncStorage. On web (the browser demo) SecureStore is unavailable, so keys fall back to
 // localStorage and the UI says so.
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { emptyNotebook, type Notebook } from "../core/notebook";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import type { Job } from "../core/orchestrator";
@@ -113,6 +114,25 @@ export const settings = {
   },
   async save(s: Settings) {
     await AsyncStorage.setItem(SETTINGS, JSON.stringify(s));
+  },
+};
+
+// The team notebook lives on the phone only (see core/notebook.ts).
+const NOTEBOOK = "passfair.notebook";
+export const notebook = {
+  async load(): Promise<Notebook> {
+    try {
+      const nb = JSON.parse((await AsyncStorage.getItem(NOTEBOOK)) || "null");
+      return nb && Array.isArray(nb.pages) ? nb : emptyNotebook();
+    } catch {
+      return emptyNotebook();
+    }
+  },
+  async save(nb: Notebook) {
+    await AsyncStorage.setItem(NOTEBOOK, JSON.stringify(nb));
+  },
+  async clear() {
+    await AsyncStorage.removeItem(NOTEBOOK);
   },
 };
 

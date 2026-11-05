@@ -1,6 +1,6 @@
 # Passfair privacy policy
 
-_Last updated: 2026-11-04. This page is the privacy policy for the Passfair iOS and Android apps. Host it at a public URL (for example `https://challenge.agentsfair.ai/passfair/privacy`) and enter that URL in App Store Connect and Google Play Console._
+_Last updated: 2026-11-05. This page is the privacy policy for the Passfair iOS and Android apps. Host it at a public URL (for example `https://challenge.agentsfair.ai/passfair/privacy`) and enter that URL in App Store Connect and Google Play Console._
 
 ## The short version
 
@@ -13,6 +13,7 @@ Passfair runs on your phone. It has no account system and no server of its own f
 - **Your briefs, drafts and reviews** are stored on your device. When you run a live job they are sent to the providers you connected, under those providers' own terms. In demo mode nothing leaves the phone.
 - **Hand-off to Muse** is optional. Only when you pair your own Muse account and hand a job off, the finished deliverable (title and text) is sent through the Agents Fair Handoff Relay so your Muse can collect it. The relay stores it encrypted for at most 7 days and never reads or executes it.
 - **Invite friends** (optional). To give you an invite code and count friends who join, the app registers a random install id (created on the phone, not a device or advertising identifier) with the Agents Fair invite server, together with your platform (iOS/Android). The server keeps a one-way hash of that id, your invite code, which invite code you entered, and whether you finished your first brief (yes/no only — never its content). Free-month rewards are App Store / Google Play promotional codes shown to you in the app. There are no cash rewards, and the invite programme never asks for your name, email or payment details.
+- **Team notebook (Pro)**: when you approve a result, one of your connected agents summarises its key decisions and facts into short notebook pages kept on your phone. Relevant pages are included in later briefs sent to your connected agents. You can read, delete, export or clear the notebook at any time; it is never sent to Agents Fair.
 - **Reporting AI-generated content**: when you tap Report, the app prepares the report on your phone and you choose how to send it. It is not sent anywhere automatically.
 - **No analytics, no advertising SDKs, no tracking.** The app contains no third-party analytics or crash-reporting code.
 
@@ -23,6 +24,7 @@ Passfair runs on your phone. It has no account system and no server of its own f
 | API keys you paste | Device keychain only; sent to that provider's API on each request | To call the model you chose |
 | Briefs, material, drafts, reviews | Device storage; sent to your connected providers during live runs | That is the product |
 | Files, photos, videos, links you attach | Read on the device; sent to your connected providers during live runs (binary files only to an agent that can read them) | So the agents can use them |
+| Team notebook pages (Pro) | Device storage; included in later briefs sent to your connected providers | So the team builds on work you approved |
 | Pro subscription status | Checked with the App Store or Google Play on the device | To unlock Pro features |
 | Relay pairing token and code | Device storage; used to talk to the Handoff Relay | To let your Muse collect finished work |
 | Deliverables you hand off | Handoff Relay (encrypted at rest, ≤ 7 days) | To deliver to your Muse |

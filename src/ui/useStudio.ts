@@ -13,6 +13,8 @@ import {
   type FeedbackSource,
   type Job,
   type PresetId,
+  bestRound,
+  deliverableOf,
   lastDeliverable,
   newJob,
   packageFor,
@@ -28,6 +30,7 @@ import {
   type ProviderId,
   allProviders,
   canSee,
+  complete,
   getProvider,
   mediaKind,
   setCustomAgents,
@@ -36,6 +39,16 @@ import {
 } from "../core/providers";
 import { createRelayClient } from "../core/relay";
 import { type ReferralStatus, createReferralClient } from "../core/referral";
+import {
+  type Notebook,
+  applyIngest,
+  emptyNotebook,
+  knowledgeBlock,
+  librarianPrompt,
+  notebookMarkdown,
+  removePage,
+  selectPages,
+} from "../core/notebook";
 import { AppState, Platform } from "react-native";
 import { holdBackground, releaseBackground, shouldAutoResume } from "./background";
 
@@ -56,6 +69,7 @@ import {
   installId,
   jobs as jobStore,
   keys,
+  notebook as notebookStore,
   settings as settingsStore,
 } from "../store/storage";
 
@@ -87,6 +101,14 @@ export function useStudio(toast: Toast, tier: Tier) {
   const mediaRef = useRef(new Map<string, MediaItem[]>());
   // Set when the system took background time back (iOS): the run pauses and resumes on return.
   const bgCutRef = useRef(false);
+  // Team notebook: approved work the agents build on in later briefs (Pro).
+  const notebookRef = useRef<Notebook>(emptyNotebook());
+  const [notebook, setNotebook] = useState<Notebook>(emptyNotebook());
+  const saveNotebook = useCallback((nb: Notebook) => {
+    notebookRef.current = nb;
+    setNotebook(nb);
+    notebookStore.save(nb).catch(() => {});
+  }, []);
   // What each agent has written so far in the current run (shown live), refreshed a few times a second.
   const liveRef = useRef(new Map<string, LiveTurn>());
   const [live, setLive] = useState<LiveTurn[]>([]);
@@ -167,7 +189,9 @@ export function useStudio(toast: Toast, tier: Tier) {
 
   useEffect(() => {
     (async () => {
-      const [j, s] = await Promise.all([jobStore.load(), settingsStore.load()]);
+      const [j, s, nb] = await Promise.all([jobStore.load(), settingsStore.load(), notebookStore.load()]);
+      notebookRef.current = nb;
+      setNotebook(nb);
       settingsRef.current = s;
       setSettings(s);
       await reloadConnections();
@@ -370,7 +394,11 @@ export function useStudio(toast: Toast, tier: Tier) {
         seer,
         attachments: files.map((a) => ({ name: a.name, mime: a.mime, kind: a.kind, chars: a.text?.length })),
         previousLang: s.lastLang,
+        knowledge: knowledgeBlock(
+          limits.notebook ? selectPages(notebookRef.current, `${goal}\n${context.slice(0, 2000)}`) : [],
+        ),
       });
+      noteUsed(j);
       if (j.lang && j.lang !== s.lastLang) saveSettings({ lastLang: j.lang }).catch(() => {});
       j.saver = d.saver;
       if (!d.polish) delete j.assignments.polisher;
@@ -382,6 +410,69 @@ export function useStudio(toast: Toast, tier: Tier) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [connectedIds.join(","), panel, run, upsert, tier],
   );
+
+  // Tells the user which notebook pages this brief builds on.
+  function noteUsed(j: Job) {
+    const titles = (j.knowledge || "").match(/^### (.+?) \(/gm)?.map((t) => t.slice(4, -2)) || [];
+    if (!titles.length) return;
+    j.events.push({
+      role: "check",
+      round: 0,
+      provider: "passfair",
+      model: "notebook",
+      text: `Building on ${titles.length} notebook page${titles.length > 1 ? "s" : ""}: ${titles.join(" · ")}`,
+      usage: { input: 0, output: 0 },
+      at: new Date().toISOString(),
+    });
+  }
+
+  // After the user approves a result, a librarian files it into the notebook in the background.
+  async function fileToNotebook(id: string) {
+    const j = jobsRef.current.find((x) => x.id === id);
+    if (!j || j.mode !== "live" || j.noted || !LIMITS[tier].notebook) return;
+    const best = bestRound(j);
+    const result = best ? deliverableOf(j, best.round) : lastDeliverable(j);
+    if (!result.trim()) return;
+    const order = [j.assignments.reviewer, j.assignments.worker, ...connectedIds].filter(Boolean) as string[];
+    const r = refs();
+    let cred: { provider: ProviderId; model: string; key: string } | null = null;
+    for (const p of order) {
+      if (p === "demo") continue;
+      const c = await keys.get(p, r[p]);
+      if (c) {
+        cred = { provider: p as ProviderId, ...c };
+        break;
+      }
+    }
+    if (!cred) return;
+    try {
+      const { system, prompt } = librarianPrompt(notebookRef.current, j, result);
+      const out = await complete({ ...cred, system, prompt, maxTokens: 3000 });
+      const now = new Date().toISOString();
+      const res = applyIngest(
+        notebookRef.current,
+        out.text,
+        { jobId: j.id, date: now, brief: j.goal.slice(0, 120) },
+        now,
+      );
+      if (!res.added && !res.updated) return;
+      saveNotebook(res.notebook);
+      j.noted = true;
+      j.events.push({
+        role: "check",
+        round: j.events.filter((e) => e.role === "worker").length,
+        provider: "passfair",
+        model: "notebook",
+        text: [
+          `Filed to your notebook: ${res.added} new page${res.added === 1 ? "" : "s"}, ${res.updated} updated.`,
+          ...res.conflicts.map((c) => `Changed "${c.title}": was ${c.was || "—"} → now ${c.now || "—"}`),
+        ].join("\n"),
+        usage: { input: out.usage.input, output: out.usage.output },
+        at: now,
+      });
+      upsert({ ...j });
+    } catch {}
+  }
 
   const stop = useCallback(() => abortRef.current?.abort(), []);
 
@@ -424,6 +515,7 @@ export function useStudio(toast: Toast, tier: Tier) {
       if (!j) return;
       j.status = "accepted";
       upsert({ ...j });
+      fileToNotebook(id).catch(() => {});
     },
     [upsert],
   );
@@ -529,6 +621,7 @@ export function useStudio(toast: Toast, tier: Tier) {
       orderId: j.origin?.orderId || null,
     });
     j.status = "delivered";
+    fileToNotebook(id).catch(() => {});
     j.handoffs.push({ deliverableId: d.deliverableId, version: j.version || 1, at: new Date().toISOString(), auto });
     j.events.push({
       role: "handoff",
@@ -639,6 +732,10 @@ export function useStudio(toast: Toast, tier: Tier) {
     removeCustom,
     signInOpenRouter,
     handoff,
+    notebook,
+    removeNote: (pid: string) => saveNotebook(removePage(notebookRef.current, pid)),
+    clearNotebook: () => saveNotebook(emptyNotebook()),
+    notebookMarkdown: () => notebookMarkdown(notebookRef.current),
     resume: run,
     invites,
     inviteError,

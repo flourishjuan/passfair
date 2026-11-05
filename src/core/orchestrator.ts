@@ -167,6 +167,10 @@ export interface Job {
   researcher?: ProviderId;
   seer?: ProviderId;
   attachments?: { name: string; mime: string; chars?: number; kind: string }[];
+  /** Pages from the user's team notebook that this brief builds on (chosen when the job is created). */
+  knowledge?: string;
+  /** Set once this job's approved result has been filed into the notebook. */
+  noted?: boolean;
   /** Language every agent writes in: the user's latest message, else the conversation's so far. */
   lang?: string;
   /** Token savers (set from Quick / Standard / Deep). Unset = the original full behaviour. */
@@ -250,7 +254,8 @@ export function headFor(job: Job): string {
   const seed = job.seed ? `\n\nSTARTING DRAFT (supplied by the user, e.g. from another assistant):\n${job.seed}` : "";
   const media = job.events.find((e) => e.role === "seer" && !e.failed);
   const research = job.events.find((e) => e.role === "researcher" && !e.failed);
-  return `${languageRule(job.lang)}\n\nBRIEF:\n${job.goal}\n\nSUPPLIED MATERIAL:\n${material}${seed}${
+  const known = job.knowledge ? `\n\n${job.knowledge}` : "";
+  return `${languageRule(job.lang)}\n\nBRIEF:\n${job.goal}${known}\n\nSUPPLIED MATERIAL:\n${material}${seed}${
     media
       ? `\n\nNOTES ON THE ATTACHED FILES (written by ${media.model}, the agent that could see them):\n${media.text}`
       : ""
@@ -1117,6 +1122,8 @@ export function newJob(input: {
   maxOutputTokens?: number;
   /** Language of the conversation so far, used when the brief alone is too short to tell. */
   previousLang?: string | null;
+  /** From the team notebook: what earlier approved work already settled (see notebook.ts). */
+  knowledge?: string;
 }): Job {
   const p = presets[input.preset];
   const assignments: Assignments = { ...input.assignments };
@@ -1125,6 +1132,7 @@ export function newJob(input: {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     goal: input.goal.trim(),
     ...((l) => (l ? { lang: l } : {}))(languageFor(input.goal, input.previousLang)),
+    ...(input.knowledge ? { knowledge: input.knowledge } : {}),
     context: (input.context || "").trim(),
     seed: (input.seed || "").trim(),
     mode: input.mode,
