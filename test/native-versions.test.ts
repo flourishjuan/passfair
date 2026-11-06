@@ -22,5 +22,6 @@ test("native modules: installed and pinned to the exact SDK-tested version", () 
 });
 
 test("third-party native modules are pinned exactly", () => {
-  for (const name of ["expo-iap", "react-native-background-actions"]) assert.match(pkg.dependencies[name], /^\d+\.\d+\.\d+$/, name);
+  for (const name of ["expo-iap", "react-native-background-actions"])
+    assert.match(pkg.dependencies[name], /^\d+\.\d+\.\d+$/, name);
 });

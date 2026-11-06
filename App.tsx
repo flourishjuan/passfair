@@ -23,6 +23,8 @@ import { settings as settingsStore } from "./src/store/storage";
 import { fromClipboard, fromLink, pickFiles, pickMedia } from "./src/ui/attach";
 import { type ExportChoice, exportJob, exportLabel, exportOrder } from "./src/ui/exportFile";
 import { Feed, RunFacts, Working } from "./src/ui/feed";
+import { CollectionView, continueLabel } from "./src/ui/collectionView";
+import { collectionText } from "./src/core/collection";
 import { Btn, Chip, Row } from "./src/ui/kit";
 import { Logo } from "./src/ui/Logo";
 import { Markdown } from "./src/ui/markdown";
@@ -55,12 +57,6 @@ const confirm = (title: string, message: string, ok: () => void) => {
     { text: "OK", style: "destructive", onPress: ok },
   ]);
 };
-
-const STARTERS = [
-  "Find the one service my business should sell first — who buys, price, how to get the first customer with no ad budget.",
-  "Pressure-test my pricing: here is what I charge and why. What would you change?",
-  "Plan a product launch for next month with zero ad spend. Borrow ideas from other industries.",
-];
 
 // A last line of defence: an unexpected error shows on screen (so it can be screenshotted and fixed)
 // instead of closing the app.
@@ -184,7 +180,18 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
   const job = st.job;
   const running = !!st.runningId && st.runningId === job?.id;
   const finished =
-    !!job && ["awaiting_review", "accepted", "delivered", "published", "stopped", "failed"].includes(job.status);
+    !!job &&
+    [
+      "awaiting_review",
+      "accepted",
+      "delivered",
+      "published",
+      "stopped",
+      "failed",
+      "partial",
+      "awaiting_choice",
+    ].includes(job.status);
+  const collection = job?.flow === "collection";
   const mode: "send" | "cutin" | "reply" = running ? "cutin" : job && finished ? "reply" : "send";
   const L = LIMITS[pro.tier];
   const flow = st.settings.flow || "brainstorm";
@@ -226,6 +233,15 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
     const sending = files;
     if (mode === "send") setFiles([]);
     try {
+      if (collection && job && mode === "cutin") {
+        setText(t);
+        return toast("The agents are still writing — send your follow-up when this screen is done.");
+      }
+      if (collection && job && mode === "reply") {
+        if (job.status === "awaiting_choice") await st.choose(job.id, t);
+        else await st.followUp(job.id, t);
+        return;
+      }
       if (mode === "cutin") await st.cutIn(t);
       else if (mode === "reply" && job) await st.feedback(job.id, t, "manual");
       else await st.start(t, { files: sending });
@@ -292,14 +308,9 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
             keyboardShouldPersistTaps="handled"
           >
             {!job ? (
-              <View style={{ gap: 22, paddingTop: 24 }}>
-                <Text style={F.display}>What should your agents figure out together?</Text>
-                <Text style={[F.body, { color: T.sub }]}>
-                  Each agent attacks the problem through a different industry, they debate each other, then decide,
-                  build and cross-check the result. You watch it all happen.
-                </Text>
+              <View style={{ paddingTop: 24 }}>
                 {noAgents && (
-                  <Pressable onPress={() => setSheet("menu")} style={styles.card}>
+                  <Pressable onPress={() => setSheet("menu")} style={styles.row}>
                     <Text style={F.head}>Connect your agents</Text>
                     <Text style={F.small}>
                       Sign in once with OpenRouter for Claude, GPT, Grok, Gemini and more — or add each vendor's key.
@@ -307,26 +318,28 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     </Text>
                   </Pressable>
                 )}
-                <View style={{ gap: 10 }}>
-                  {STARTERS.map((t) => (
-                    <Pressable key={t} onPress={() => setText(t)} style={styles.card}>
-                      <Text style={F.body}>{t}</Text>
-                    </Pressable>
-                  ))}
-                </View>
               </View>
             ) : (
               <View style={{ gap: 26 }}>
-                <View style={styles.brief}>
-                  <Text style={[F.body, { color: T.white }]}>{job.goal}</Text>
-                  {!!job.attachments?.length && (
-                    <Text style={[F.small, { color: "#C9C6D6" }]}>
-                      📎 {job.attachments.map((a) => a.name).join(", ")}
-                    </Text>
-                  )}
-                </View>
-                <Feed job={job} onReport={job.mode === "live" ? report : undefined} live={running ? st.live : []} />
-                {running && <Working job={job} />}
+                {collection ? (
+                  <CollectionView
+                    job={job}
+                    live={running ? st.live : []}
+                    running={running}
+                    onChoose={(title) => st.choose(job.id, title).catch((e: any) => toast(e?.message || "Failed."))}
+                  />
+                ) : (
+                  <>
+                    <View style={styles.brief}>
+                      <Text style={F.body}>{job.goal}</Text>
+                    </View>
+                    <Feed job={job} live={running ? st.live : []} />
+                    {running && <Working job={job} />}
+                  </>
+                )}
+                {collection && !!job.attachments?.length && (
+                  <Text style={F.small}>📎 {job.attachments.map((a) => a.name).join(", ")}</Text>
+                )}
                 {job.status === "failed" && (
                   <View style={{ gap: 10 }}>
                     <Text style={[F.body, { color: T.danger }]}>{job.error}</Text>
@@ -336,7 +349,78 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                     </Row>
                   </View>
                 )}
-                {finished && job.status !== "failed" && (
+                {collection && finished && job.status !== "failed" && job.status !== "awaiting_choice" && !running && (
+                  <View style={{ gap: 10 }}>
+                    {job.status === "stopped" && (
+                      <Text style={F.small}>
+                        {job.error === "interrupted"
+                          ? "Paused while Passfair was in the background — it carries on when you open the app."
+                          : "Stopped."}
+                      </Text>
+                    )}
+                    <Row>
+                      {(() => {
+                        const label = continueLabel(job) || (job.status === "stopped" ? "Resume" : null);
+                        return label ? (
+                          <Btn
+                            label={label}
+                            small
+                            kind="soft"
+                            onPress={() =>
+                              (job.status === "stopped" ? st.resume(job) : st.more(job.id)).catch((e: any) =>
+                                toast(e?.message || "Failed."),
+                              )
+                            }
+                          />
+                        ) : null;
+                      })()}
+                      {job.mode === "live" && (
+                        <Btn
+                          label={`Download ${exportOpen ? "▴" : "▾"}`}
+                          small
+                          kind="plain"
+                          onPress={() => setExportOpen(!exportOpen)}
+                        />
+                      )}
+                      {job.mode === "live" && (
+                        <Btn
+                          label="Share"
+                          small
+                          kind="plain"
+                          onPress={() =>
+                            Share.share({
+                              message: collectionText(job, job.panel || []),
+                              title: job.goal.slice(0, 60),
+                            }).catch(() => {})
+                          }
+                        />
+                      )}
+                      <Btn
+                        label="Delete"
+                        small
+                        kind="plain"
+                        onPress={() =>
+                          confirm("Delete this conversation?", "It is removed from this phone.", () =>
+                            st.remove(job.id),
+                          )
+                        }
+                      />
+                    </Row>
+                    {exportOpen && (
+                      <Row>
+                        {exportOrder.map((c) => (
+                          <Chip
+                            key={c}
+                            label={exportLabel[c]}
+                            locked={!L.exports.includes(c)}
+                            onPress={() => exportAs(c)}
+                          />
+                        ))}
+                      </Row>
+                    )}
+                  </View>
+                )}
+                {!collection && finished && job.status !== "failed" && (
                   <View style={styles.final}>
                     <Text style={F.label}>
                       {(job.mode === "demo"
@@ -446,6 +530,26 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
 
           {!!toastMsg && <Text style={styles.toast}>{toastMsg}</Text>}
 
+          {!job && !st.settings.sampleOff && (
+            <View style={styles.sample}>
+              <Pressable
+                style={{ flex: 1, gap: 2 }}
+                onPress={() => st.start("", { demo: true }).catch((e: any) => toast(e?.message || "Failed."))}
+                accessibilityRole="button"
+                accessibilityLabel="Watch a sample"
+              >
+                <Text style={F.head}>Watch a sample</Text>
+                <Text style={F.small}>Three AIs answer one question, side by side. No key needed.</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => st.saveSettings({ sampleOff: true })}
+                hitSlop={12}
+                accessibilityLabel="Close the sample card"
+              >
+                <Text style={[F.body, { color: T.faint }]}>✕</Text>
+              </Pressable>
+            </View>
+          )}
           <View style={styles.composer}>
             {files.length > 0 && mode === "send" && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -519,24 +623,6 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
             {mode === "send" && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                 <Chip label="＋" on={attachOpen} onPress={() => setAttachOpen(!attachOpen)} />
-                <Chip
-                  label={flow === "brainstorm" ? "✦ Brainstorm" : "Build"}
-                  onPress={() => st.saveSettings({ flow: flow === "brainstorm" ? "build" : "brainstorm" })}
-                />
-                <Chip
-                  label={DEPTH[st.settings.depth || "standard"].label}
-                  onPress={() => {
-                    const order: Depth[] = ["quick", "standard", "deep"];
-                    const cur = order.indexOf(st.settings.depth || "standard");
-                    st.saveSettings({ depth: order[(cur + 1) % 3] });
-                  }}
-                />
-                <Chip
-                  label={noAgents ? "Connect agents" : panelLabel}
-                  color={noAgents ? undefined : vendorColor(st.panel[0] || "demo")}
-                  onPress={() => setSheet(noAgents ? "menu" : "team")}
-                />
-                {pro.tier === "free" && <Chip label="Pro" onPress={() => setSheet("pro")} />}
               </ScrollView>
             )}
             <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
@@ -558,25 +644,33 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                 multiline
                 placeholderTextColor={T.faint}
                 placeholder={
-                  mode === "send"
-                    ? noAgents
-                      ? "Connect an agent first (••• top left)"
-                      : "Ask your agents…"
-                    : mode === "cutin"
-                      ? "Cut in — the team stops and follows you"
+                  collection && mode === "reply"
+                    ? job?.status === "awaiting_choice"
+                      ? "Or type your own direction"
                       : job?.mode === "demo"
-                        ? "Sample finished — tap ✎ for your own brief"
-                        : "Reply to revise (paste a Muse error too)"
+                        ? "Sample — tap ✎ to ask your own question"
+                        : "Ask a follow-up — the agents answer together"
+                    : collection && mode === "cutin"
+                      ? "The agents are writing…"
+                      : mode === "send"
+                        ? noAgents
+                          ? "Connect an agent first (••• top left)"
+                          : "Ask your agents…"
+                        : mode === "cutin"
+                          ? "Cut in — the team stops and follows you"
+                          : job?.mode === "demo"
+                            ? "Sample finished — tap ✎ for your own brief"
+                            : "Reply to revise (paste a Muse error too)"
                 }
                 style={[styles.input, { flex: 1 }]}
               />
               {running && (
                 <Pressable
                   onPress={st.stop}
-                  style={[styles.send, { backgroundColor: T.dangerSoft }]}
+                  style={[styles.send, { backgroundColor: T.surface }]}
                   accessibilityLabel="Stop"
                 >
-                  <Text style={{ color: T.danger, fontSize: 16, fontWeight: "400" }}>■</Text>
+                  <Text style={{ color: T.ink, fontSize: 16, fontWeight: "400" }}>■</Text>
                 </Pressable>
               )}
               <Pressable
@@ -588,7 +682,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                 ]}
                 accessibilityLabel={mode === "send" ? "Send" : mode === "cutin" ? "Cut in" : "Reply"}
               >
-                <Text style={{ color: T.white, fontSize: 20, fontWeight: "400" }}>↑</Text>
+                <Text style={{ color: T.ink, fontSize: 20, fontWeight: "400" }}>↑</Text>
               </Pressable>
             </View>
           </View>
@@ -609,8 +703,17 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
           onPro={() => setSheet("pro")}
           onRestore={pro.restore}
           onManage={pro.manage}
-          onInvite={() => setSheet("invite")}
           jobs={st.jobs}
+          canDebate={!!job?.collection && job.events.some((e) => e.role === "answer") && !running}
+          onDebate={() => {
+            setSheet(null);
+            if (job) st.debate(job.id).catch((e: any) => toast(e?.message || "Failed."));
+          }}
+          onReportJob={(id) => {
+            st.setJobId(id);
+            setReportOf(null);
+            setSheet("report");
+          }}
           runningId={st.runningId}
           onOpenJob={(id) => {
             st.setJobId(id);
@@ -725,15 +828,25 @@ const styles = StyleSheet.create({
   dots: { fontSize: 18, letterSpacing: 1, color: T.ink },
   feed: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 28 },
   card: { backgroundColor: T.surface, borderRadius: T.radius, padding: 16, gap: 4 },
-  brief: {
-    alignSelf: "flex-end",
-    maxWidth: "92%",
-    backgroundColor: T.ink,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 4,
+  sample: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: T.white,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: T.line,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
+  brief: { paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.line, gap: 4 },
+  row: { paddingVertical: 14, gap: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.line },
   final: { gap: 14, paddingTop: 4 },
   composer: {
     paddingHorizontal: 12,
@@ -757,7 +870,7 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 46,
-    backgroundColor: T.ink,
+    backgroundColor: T.surface,
     alignItems: "center",
     justifyContent: "center",
   },

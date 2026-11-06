@@ -6,6 +6,7 @@ import * as Sharing from "expo-sharing";
 import { Platform } from "react-native";
 import { type ExportFormat, formats, toDocx, toHtml, toPptx } from "../core/export";
 import { type Job, lastDeliverable } from "../core/orchestrator";
+import { collectionText, vendorName } from "../core/collection";
 
 export type { ExportFormat };
 export type ExportChoice = ExportFormat | "record";
@@ -43,12 +44,31 @@ export function recordOf(job: Job): string {
   return lines.join("\n");
 }
 
+function collectionExport(job: Job): string {
+  const panel = (job.panel || []) as string[];
+  const parts = [`# ${job.goal}`, "", collectionText(job, panel)];
+  for (const f of job.events.filter((e) => e.role === "feedback" && e.source === "you")) {
+    parts.push("", `## ${f.text}`);
+    for (const r of job.events.filter((e) => e.role === "followup" && e.round === f.round && !e.failed))
+      parts.push("", `### ${vendorName(r.provider)}`, "", r.text);
+  }
+  const d = job.events.filter((e) => e.role === "debater" && !e.failed);
+  if (d.length) {
+    parts.push("", "## Debate");
+    for (const e of d) parts.push("", `### ${vendorName(e.provider)}`, "", e.text);
+  }
+  return parts.join("\n");
+}
+
 export function exportMeta(job: Job) {
   const approved = job.outcome === "approved_by_reviewer";
   return {
     title: job.goal.slice(0, 80) || "Passfair deliverable",
     creator: "Passfair",
-    footer: `Made with Passfair · ${approved ? (job.assignments.verifier ? "approved by both reviewers" : "reviewer approved") : "read critically"} · v${job.version || 1}`,
+    footer:
+      job.flow === "collection"
+        ? "Made with Passfair"
+        : `Made with Passfair · ${approved ? (job.assignments.verifier ? "approved by both reviewers" : "reviewer approved") : "read critically"} · v${job.version || 1}`,
     filename: `passfair-${job.id.slice(0, 8)}`,
   };
 }
@@ -57,7 +77,8 @@ export async function exportJob(job: Job, choice: ExportChoice): Promise<void> {
   if (job.mode === "demo") throw new Error("The demo is a scripted sample, not your work — nothing to export.");
   const format: ExportFormat = choice === "record" ? "md" : choice;
   // No draft yet (the run stopped after the brainstorm): export the decision instead of nothing.
-  const draft = job.final || lastDeliverable(job);
+  // A collection exports every AI's answer under its name (follow-ups and debate included).
+  const draft = job.flow === "collection" ? collectionExport(job) : job.final || lastDeliverable(job);
   const decision = job.events.find((e) => e.role === "decider" && !e.failed)?.text || "";
   const text =
     choice === "record"

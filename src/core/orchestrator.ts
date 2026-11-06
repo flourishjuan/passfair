@@ -4,6 +4,7 @@
 // `maxRounds`, and the final version is the best-reviewed round (later rounds cannot silently make things worse).
 // External feedback (a publishing problem reported by Muse, or a new instruction typed by the user)
 // re-enters the loop as a review. Nothing here browses, sends, pays or publishes.
+import { initCollection } from "./collection";
 import { languageFor, languageRule } from "./language";
 import { budgetFor, estimateTokens, fitPrompt, profileFor } from "./profiles";
 import { complete, fail, type Fetcher, type MediaItem, type ProviderId, type Usage } from "./providers";
@@ -19,7 +20,12 @@ export type Role =
   | "researcher"
   | "framer"
   | "panelist"
-  | "decider";
+  | "decider"
+  // Collection flow (collection.ts): each vendor's own answer, follow-ups answered together, debate.
+  | "scope"
+  | "answer"
+  | "followup"
+  | "debater";
 export const roles: Role[] = ["planner", "worker", "polisher", "reviewer", "verifier"];
 export const reviewRoles: Role[] = ["reviewer", "verifier"];
 export const isReviewRole = (r: string): boolean => r === "reviewer" || r === "verifier" || r === "check";
@@ -140,7 +146,17 @@ export interface JobEvent {
   source?: FeedbackSource;
 }
 export type JobStatus =
-  "queued" | "running" | "awaiting_review" | "accepted" | "stopped" | "failed" | "delivered" | "published";
+  | "queued"
+  | "running"
+  | "awaiting_review"
+  | "accepted"
+  | "stopped"
+  | "failed"
+  | "delivered"
+  | "published"
+  // Collection flow: waiting for the user to pick a direction / more segments can follow.
+  | "awaiting_choice"
+  | "partial";
 export type Assignments = Partial<Record<Role, ProviderId | "demo">>;
 export interface Job {
   id: string;
@@ -168,7 +184,9 @@ export interface Job {
   rounds?: RoundRecord[];
   finalRound?: number;
   /** "brainstorm": frame → ideas through cross-domain lenses → debate → decision → build. "build": plan → build. */
-  flow?: "build" | "brainstorm";
+  flow?: "build" | "brainstorm" | "collection";
+  /** Collection flow state: pinned constraints, directions, segments (see collection.ts). */
+  collection?: import("./collection").CollectionState;
   panel?: ProviderId[];
   lenses?: string[];
   debateRounds?: number;
@@ -568,13 +586,7 @@ export function parseReview(text: string, requireCriteria = false): Review {
   const lowAxis = !!axes && Math.min(axes.accuracy, axes.clarity, axes.completeness) < AXIS_PASS;
   return {
     verdict:
-      data.verdict === "pass" &&
-      !serious &&
-      !unmet &&
-      !lowAxis &&
-      !(score !== null && score < 8)
-        ? "pass"
-        : "revise",
+      data.verdict === "pass" && !serious && !unmet && !lowAxis && !(score !== null && score < 8) ? "pass" : "revise",
     score,
     ...(axes ? { axes } : {}),
     summary: String(data.summary || "").slice(0, 1000),
@@ -1173,6 +1185,7 @@ export function newJob(input: {
     goal: input.goal.trim(),
     ...((l) => (l ? { lang: l } : {}))(languageFor(input.goal, input.previousLang)),
     ...(input.knowledge ? { knowledge: input.knowledge } : {}),
+    ...(input.flow === "collection" ? { collection: initCollection(input.goal) } : {}),
     context: (input.context || "").trim(),
     seed: (input.seed || "").trim(),
     mode: input.mode,

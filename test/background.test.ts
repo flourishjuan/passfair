@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { shouldAutoResume } from "../src/core/resume";
 
-
 test("a run paused by the system resumes by itself; stopped-by-you, failed and demo runs do not", () => {
   const now = Date.parse("2026-11-04T12:00:00Z");
   const at = (m: number) => new Date(now - m * 60000).toISOString();

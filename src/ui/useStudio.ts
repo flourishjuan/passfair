@@ -21,6 +21,7 @@ import {
   reopenWithFeedback,
   runJob,
   type LiveTurn,
+  type RunDeps,
 } from "../core/orchestrator";
 import { DEPTH, LIMITS, type Tier, clamp } from "../core/plan";
 import {
@@ -51,6 +52,7 @@ import {
 } from "../core/notebook";
 import { AppState, Platform } from "react-native";
 import { holdBackground, releaseBackground, shouldAutoResume } from "./background";
+import { SAMPLE_QUESTION, collectionText, runCollection, runDebate, runFollowUp } from "../core/collection";
 
 // Streaming needs a fetch whose response body can be read as it arrives: Expo's on phones, the browser's on web.
 const streamingFetch: Fetcher = (() => {
@@ -224,7 +226,7 @@ export function useStudio(toast: Toast, tier: Tier) {
   // Runs a job. Switching apps doesn't stop it: Android keeps it running in the background; iOS keeps it
   // going as long as the system allows, then pauses it and picks it up again when Passfair is reopened.
   const run = useCallback(
-    async (j: Job) => {
+    async (j: Job, task?: (deps: RunDeps) => Promise<void>) => {
       if (runningRef.current === j.id) return toast("Already running — the team is working on it.");
       if (runningRef.current) {
         // Another job is still going: stop it first, then continue this one.
@@ -253,7 +255,7 @@ export function useStudio(toast: Toast, tier: Tier) {
         if (c) creds[p.id] = { provider: p.id, ...c };
       }
       try {
-        await runJob(j, {
+        const deps: RunDeps = {
           save: (x) => upsert({ ...x, events: [...x.events] }),
           isCancelled: () => ac.signal.aborted,
           credential: (p) => creds[p] || null,
@@ -262,21 +264,31 @@ export function useStudio(toast: Toast, tier: Tier) {
           media: mediaRef.current.get(j.id),
           onLive,
           fetcher: streamingFetch,
-        });
+        };
+        // Collection jobs (each vendor's own answer) run their own steps; the older flows run as before.
+        if (task) await task(deps);
+        else if (j.flow === "collection") await runCollection(j, deps);
+        else await runJob(j, deps);
         if (ac.signal.aborted) {
           j.status = "stopped";
           j.current = null;
           if (bgCutRef.current) j.error = "interrupted"; // paused by the system, resumes on return
           upsert({ ...j });
-        } else if (j.status === "awaiting_review") {
+        } else if (j.status === "awaiting_review" || (j.flow === "collection" && j.status === "partial")) {
           // First real brief finished: tell the invite service once (this is what makes an invite count).
           if (j.mode === "live" && j.usage.calls > 0 && !settingsRef.current.activatedSent)
             referral
               .activate()
               .then(() => saveSettings({ activatedSent: true }))
               .catch(() => {});
+          // A finished collection goes into the team notebook (it is the user's work to build on).
+          if (j.flow === "collection" && j.status === "awaiting_review") fileToNotebook(j.id).catch(() => {});
           const auto = settingsRef.current.autoHandoff || "off";
-          if (j.mode === "live" && (auto === "always" || (auto === "approved" && j.outcome === "approved_by_reviewer")))
+          if (
+            j.flow !== "collection" &&
+            j.mode === "live" &&
+            (auto === "always" || (auto === "approved" && j.outcome === "approved_by_reviewer"))
+          )
             await handoff(j.id, true);
         }
       } catch (e: any) {
@@ -346,62 +358,42 @@ export function useStudio(toast: Toast, tier: Tier) {
     return { media, seer, context: materialFrom(files) };
   }
 
+  // Every brief is a "collection": each connected agent answers on its own, side by side (collection.ts).
   const start = useCallback(
     async (goal: string, opts: { demo?: boolean; files?: Attachment[] } = {}) => {
-      const flow = settingsRef.current.flow || "brainstorm";
       if (opts.demo) {
         const j = newJob({
-          goal: flow === "brainstorm" ? DEMO_BRAINSTORM_BRIEF : DEMO_BRIEF,
+          goal: SAMPLE_QUESTION,
           mode: "demo",
           preset: "make_and_ship",
-          flow,
-          panel: ["demo", "demo"],
-          debateRounds: 1,
-          minRounds: 2,
-          maxRounds: 3,
-          assignments: autoAssign("make_and_ship", []),
+          flow: "collection",
+          panel: ["anthropic", "openai", "google"],
+          assignments: {},
         });
         upsert(j);
         await run(j);
         return j;
       }
-      // A real brief is never answered by the scripted demo: no connected agent means no run.
+      // A real brief is never answered by the scripted sample: no connected agent means no run.
       if (!connectedIds.length) throw new Error("Connect an agent first: tap ••• at the top left.");
       const files = opts.files || [];
-      const { media, seer, context } = prepareFiles(files);
+      const { media, context } = prepareFiles(files);
       const s = settingsRef.current;
-      const preset = (s.preset as PresetId) || "make_and_ship";
-      const research =
-        limits.research && s.research
-          ? connectedIds.includes("perplexity")
-            ? "perplexity"
-            : connectedIds.find((p) => getProvider(p)?.search === "tool")
-          : undefined;
-      const team = flow === "brainstorm" ? panel : connectedIds;
-      const d = DEPTH[s.depth || "standard"];
       const j = newJob({
         goal,
         context,
         mode: "live",
-        preset,
-        flow,
-        panel: flow === "brainstorm" ? panel : undefined,
-        debateRounds: Math.min(d.debateRounds, LIMITS[tier].debateRounds),
-        assignments: autoAssign(preset, team),
-        maxRounds: clamp(tier, "maxBuildRounds", d.maxRounds),
-        minRounds: Math.min(d.minRounds, clamp(tier, "maxBuildRounds", d.maxRounds)),
-        researcher: research,
-        seer,
+        preset: "make_and_ship",
+        flow: "collection",
+        panel,
+        assignments: {},
         attachments: files.map((a) => ({ name: a.name, mime: a.mime, kind: a.kind, chars: a.text?.length })),
         previousLang: s.lastLang,
         knowledge: knowledgeBlock(
           limits.notebook ? selectPages(notebookRef.current, `${goal}\n${context.slice(0, 2000)}`) : [],
         ),
       });
-      noteUsed(j);
       if (j.lang && j.lang !== s.lastLang) saveSettings({ lastLang: j.lang }).catch(() => {});
-      j.saver = d.saver;
-      if (!d.polish) delete j.assignments.polisher;
       if (media.length) mediaRef.current.set(j.id, media);
       upsert(j);
       await run(j);
@@ -409,6 +401,43 @@ export function useStudio(toast: Toast, tier: Tier) {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [connectedIds.join(","), panel, run, upsert, tier],
+  );
+
+  // Collection actions: pick a direction, next screen, a follow-up (answered together), a 2-round debate.
+  const choose = useCallback(
+    async (id: string, title: string | null) => {
+      const j = jobsRef.current.find((x) => x.id === id);
+      if (!j?.collection) return;
+      j.collection.choice = title;
+      await run(j);
+    },
+    [run],
+  );
+  const more = useCallback(
+    async (id: string) => {
+      const j = jobsRef.current.find((x) => x.id === id);
+      if (!j?.collection) return;
+      if (j.collection.done >= j.collection.total) j.collection.total = j.collection.done + 1; // "go deeper"
+      await run(j);
+    },
+    [run],
+  );
+  const followUp = useCallback(
+    async (id: string, question: string) => {
+      const j = jobsRef.current.find((x) => x.id === id);
+      if (!j?.collection || !question.trim()) return;
+      await run(j, (deps) => runFollowUp(j, question.trim(), deps));
+      if (j.lang && j.lang !== settingsRef.current.lastLang) saveSettings({ lastLang: j.lang }).catch(() => {});
+    },
+    [run],
+  );
+  const debate = useCallback(
+    async (id: string) => {
+      const j = jobsRef.current.find((x) => x.id === id);
+      if (!j?.collection) return toast("Ask a question first — the agents debate the topic you just asked.");
+      await run(j, (deps) => runDebate(j, deps));
+    },
+    [run, toast],
   );
 
   // Tells the user which notebook pages this brief builds on.
@@ -431,9 +460,16 @@ export function useStudio(toast: Toast, tier: Tier) {
     const j = jobsRef.current.find((x) => x.id === id);
     if (!j || j.mode !== "live" || j.noted || !LIMITS[tier].notebook) return;
     const best = bestRound(j);
-    const result = best ? deliverableOf(j, best.round) : lastDeliverable(j);
+    const result =
+      j.flow === "collection"
+        ? collectionText(j, j.panel || [])
+        : best
+          ? deliverableOf(j, best.round)
+          : lastDeliverable(j);
     if (!result.trim()) return;
-    const order = [j.assignments.reviewer, j.assignments.worker, ...connectedIds].filter(Boolean) as string[];
+    const order = [j.assignments.reviewer, j.assignments.worker, ...(j.panel || []), ...connectedIds].filter(
+      Boolean,
+    ) as string[];
     const r = refs();
     let cred: { provider: ProviderId; model: string; key: string } | null = null;
     for (const p of order) {
@@ -732,6 +768,10 @@ export function useStudio(toast: Toast, tier: Tier) {
     removeCustom,
     signInOpenRouter,
     handoff,
+    choose,
+    more,
+    followUp,
+    debate,
     notebook,
     removeNote: (pid: string) => saveNotebook(removePage(notebookRef.current, pid)),
     clearNotebook: () => saveNotebook(emptyNotebook()),

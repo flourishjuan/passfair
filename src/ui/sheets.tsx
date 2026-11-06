@@ -1,3 +1,4 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Clipboard from "expo-clipboard";
 import React, { useState } from "react";
 import { Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
@@ -242,7 +243,88 @@ function CustomForm({
   );
 }
 
-/* ---------- the ••• menu ---------- */
+/* ---------- the ••• menu: one level of rows, each opens in place ---------- */
+
+// One agent per line: its app name, then the key field right after it.
+function KeyRow({
+  spec,
+  connection,
+  via,
+  onConnect,
+  onDisconnect,
+  onDetails,
+  extra,
+}: {
+  spec: ProviderSpec;
+  connection?: Connection;
+  via?: string;
+  onConnect: (key: string) => Promise<void>;
+  onDisconnect: () => Promise<void>;
+  onDetails: () => void;
+  extra?: React.ReactNode;
+}) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const save = async () => {
+    if (!key.trim()) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await onConnect(key.trim());
+      setKey("");
+    } catch (e: any) {
+      setErr(e?.message || "Could not connect.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={{ gap: 4 }}>
+      <View style={s.keyRow}>
+        <Pressable onPress={onDetails} style={{ width: 92 }} accessibilityLabel={`${spec.short} details`}>
+          <Text style={F.head} numberOfLines={1}>
+            {spec.short}
+          </Text>
+        </Pressable>
+        {via ? (
+          <Text style={[F.small, { flex: 1 }]}>via {via} ✓</Text>
+        ) : connection ? (
+          <Pressable onPress={onDetails} style={{ flex: 1 }}>
+            <Text style={F.small}>Connected ✓</Text>
+          </Pressable>
+        ) : (
+          <Input
+            style={{ flex: 1, paddingVertical: 8 }}
+            value={key}
+            onChangeText={setKey}
+            onSubmitEditing={save}
+            onBlur={save}
+            editable={!busy}
+            placeholder={`API key (${spec.keyHint})`}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="done"
+          />
+        )}
+        {connection && !via && (
+          <Text style={[F.small, { color: T.faint }]} onPress={() => onDisconnect()}>
+            Remove
+          </Text>
+        )}
+        {extra}
+      </View>
+      {!!err && <Text style={[F.small, { color: T.danger }]}>{err}</Text>}
+    </View>
+  );
+}
+
+const RECEIPTS =
+  Platform.OS === "android"
+    ? "https://play.google.com/store/account/orderhistory"
+    : "https://reportaproblem.apple.com/";
+
 export function MenuSheet(p: {
   visible: boolean;
   onClose: () => void;
@@ -258,7 +340,6 @@ export function MenuSheet(p: {
   onPro: () => void;
   onRestore: () => void;
   onManage: () => void;
-  onInvite: () => void;
   jobs: Job[];
   runningId: string | null;
   onOpenJob: (id: string) => void;
@@ -266,14 +347,18 @@ export function MenuSheet(p: {
   onSample: () => void;
   notebookPages: number;
   onNotebook: () => void;
+  canDebate: boolean;
+  onDebate: () => void;
+  onReportJob: (id: string) => void;
   muse: { pair: () => Promise<unknown>; check: () => Promise<unknown>; unpair: () => Promise<unknown> };
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const conn = Object.fromEntries(p.connections.map((c) => [c.provider, c]));
   const customs = p.settings.customAgents || [];
-  const orSigned = customs.some((a) => a.keyRef === "openrouter");
   const paired = p.settings.relay_paired === "1";
   const wrap = (fn: () => Promise<unknown>) => async () => {
     setBusy(true);
@@ -286,146 +371,169 @@ export function MenuSheet(p: {
       setBusy(false);
     }
   };
-  const row = (spec: ProviderSpec) => {
-    const c = conn[spec.id];
-    const custom = customs.find((a) => a.id === spec.id);
-    return (
-      <View key={spec.id} style={{ gap: 8 }}>
-        <Pressable onPress={() => setOpen(open === spec.id ? null : spec.id)} style={s.agentRow}>
-          <Dot color={c ? spec.color : T.surface2} size={10} />
-          <Text style={[F.head, { flex: 1 }]}>{spec.label}</Text>
-          <Text style={[F.small, c && { color: T.passInk }]}>{c ? c.model : "Connect"}</Text>
-        </Pressable>
-        {open === spec.id && (
-          <AgentForm
-            spec={spec}
-            connection={c}
-            shared={!!custom?.keyRef}
-            onConnect={(m, k) => p.onConnect(spec.id, m, k)}
-            onDisconnect={() => p.onDisconnect(spec.id)}
-            onModel={(m) => p.onModel(spec.id, m)}
-            onRemove={custom && !custom.managed ? () => p.onRemoveCustom(spec.id) : undefined}
-          />
-        )}
-      </View>
-    );
+  const isOr = (id: string) => customs.find((a) => a.id === id)?.keyRef === "openrouter";
+  const vendors = allProviders().filter((x) => !x.custom && x.id !== "openrouter");
+  const mine = allProviders().filter((x) => x.custom && !isOr(x.id));
+  const orSpec = getProvider("openrouter");
+  const keyRow = (spec: ProviderSpec, extra?: React.ReactNode) => (
+    <View key={spec.id} style={{ gap: 8 }}>
+      <KeyRow
+        spec={spec}
+        connection={conn[spec.id]}
+        via={isOr(spec.id) ? "OpenRouter" : undefined}
+        onConnect={(k) => p.onConnect(spec.id, conn[spec.id]?.model || spec.defaultModel, k)}
+        onDisconnect={() => p.onDisconnect(spec.id)}
+        onDetails={() => setDetail(detail === spec.id ? null : spec.id)}
+        extra={extra}
+      />
+      {detail === spec.id && (
+        <AgentForm
+          spec={spec}
+          connection={conn[spec.id]}
+          shared={isOr(spec.id)}
+          onConnect={(m, k) => p.onConnect(spec.id, m, k)}
+          onDisconnect={() => p.onDisconnect(spec.id)}
+          onModel={(m) => p.onModel(spec.id, m)}
+          onRemove={customs.find((a) => a.id === spec.id && !a.managed) ? () => p.onRemoveCustom(spec.id) : undefined}
+        />
+      )}
+    </View>
+  );
+  const ICON: Record<string, React.ComponentProps<typeof Ionicons>["name"]> = {
+    history: "time-outline",
+    agents: "people-outline",
+    bill: "receipt-outline",
+    brainstorm: "bulb-outline",
+    report: "document-text-outline",
+    about: "information-circle-outline",
+    policy: "shield-checkmark-outline",
   };
-  const builtin = allProviders().filter((x) => !getProvider(x.id)?.custom && !customs.some((a) => a.id === x.id));
-  const viaOr = allProviders().filter((x) => customs.find((a) => a.id === x.id)?.keyRef === "openrouter");
-  const mine = allProviders().filter((x) => x.custom);
+  const Item = ({ id, title, children }: { id: string; title: string; children: React.ReactNode }) => (
+    <View>
+      <Pressable
+        onPress={() => setOpen(open === id ? null : id)}
+        style={({ pressed }) => [s.menuHead, (open === id || pressed) && { backgroundColor: T.surface }]}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open === id }}
+      >
+        <Ionicons name={ICON[id] || "ellipse-outline"} size={22} color={T.ink} />
+        <Text style={[F.head, { flex: 1 }]}>{title}</Text>
+      </Pressable>
+      {open === id && <View style={{ gap: 10, paddingTop: 8, paddingBottom: 12, paddingLeft: 48 }}>{children}</View>}
+    </View>
+  );
+  const recent = [...p.jobs].sort((a, b) => (a.id === p.runningId ? -1 : b.id === p.runningId ? 1 : 0));
   return (
-    <Sheet visible={p.visible} title="Agents & settings" onClose={p.onClose}>
-      <Section title="History">
-        {!p.jobs.length && <Text style={F.small}>Your briefs appear here.</Text>}
-        {[...p.jobs]
-          .sort((a, b) => (a.id === p.runningId ? -1 : b.id === p.runningId ? 1 : 0))
-          .slice(0, 5)
-          .map((j) => (
+    <Sheet visible={p.visible} title="" onClose={p.onClose}>
+      <View style={{ gap: 2, marginHorizontal: -8 }}>
+        <Item id="history" title="History">
+          {!p.jobs.length && <Text style={F.small}>Your questions appear here.</Text>}
+          {recent.slice(0, 8).map((j) => (
             <Pressable key={j.id} onPress={() => p.onOpenJob(j.id)} style={s.histRow}>
-              <Text style={F.head} numberOfLines={1}>
+              <Text style={F.body} numberOfLines={1}>
                 {j.mode === "demo" ? "Sample · " : ""}
                 {j.goal}
               </Text>
-              <Text style={[F.small, j.id === p.runningId && { color: T.passInk }]}>
-                {j.id === p.runningId
-                  ? "Running now"
-                  : `${new Date(j.created).toLocaleDateString()} · ${j.status.replace("_", " ")}`}
+              <Text style={F.small}>
+                {j.id === p.runningId ? "Running now" : new Date(j.created).toLocaleDateString()}
               </Text>
             </Pressable>
           ))}
-        {p.jobs.length > 5 && <Btn label={`See all ${p.jobs.length}`} small kind="plain" onPress={p.onAllHistory} />}
-      </Section>
-      <Section title="Team notebook">
-        {LIMITS[p.tier].notebook ? (
-          <Pressable onPress={p.onNotebook} style={s.histRow}>
-            <Text style={F.head}>
-              {p.notebookPages ? `${p.notebookPages} page${p.notebookPages > 1 ? "s" : ""}` : "Empty so far"}
+          {p.jobs.length > 8 && <Btn label={`See all ${p.jobs.length}`} small kind="plain" onPress={p.onAllHistory} />}
+          <Pressable
+            onPress={LIMITS[p.tier].notebook ? p.onNotebook : p.onPro}
+            style={[s.histRow, !LIMITS[p.tier].notebook && { opacity: 0.5 }]}
+          >
+            <Text style={F.body}>
+              {LIMITS[p.tier].notebook ? "Team notebook" : "🔒 Team notebook"}
+              {LIMITS[p.tier].notebook && p.notebookPages ? ` · ${p.notebookPages} pages` : ""}
             </Text>
-            <Text style={F.small}>What the team remembers from work you approved.</Text>
           </Pressable>
-        ) : (
-          <Pressable onPress={p.onPro} style={[s.histRow, { opacity: 0.5 }]}>
-            <Text style={F.head}>🔒 Team notebook</Text>
-            <Text style={F.small}>Agents remember what you already decided. Pro.</Text>
-          </Pressable>
-        )}
-      </Section>
-      <Section title="Fastest way in">
-        <Btn
-          label={orSigned ? "Signed in with OpenRouter ✓ — sign in again" : "Sign in with OpenRouter"}
-          kind={orSigned ? "soft" : "primary"}
-          disabled={busy}
-          onPress={wrap(async () => {
-            const ok = await p.onSignIn();
-            if (ok) setMsg("Done — Claude, GPT, Grok, Gemini, DeepSeek and Llama are ready.");
-          })}
-        />
-        <Text style={F.small}>
-          One login in the browser, no key to copy. Adds Claude, GPT, Grok, Gemini, DeepSeek and Llama, billed by
-          OpenRouter. Passfair can't use the logins of other apps on this phone — iOS keeps every app's sign-in private.
-        </Text>
-        {!!msg && <Text style={[F.small, { color: T.ink }]}>{msg}</Text>}
-      </Section>
-      {viaOr.length > 0 && <Section title="Via OpenRouter">{viaOr.map(row)}</Section>}
-      <Section
-        title="Direct to each vendor"
-        note="Tip: copy a key on the vendor's page, come back, and tap “Paste copied key”."
-      >
-        {builtin.map(row)}
-        {notConnectable.map((n) => (
-          <View key={n.name} style={[s.agentRow, { opacity: 0.6 }]}>
-            <Dot color={T.surface2} size={10} />
-            <View style={{ flex: 1, gap: 2 }}>
-              <Text style={F.head}>{n.name}</Text>
-              <Text style={F.small}>{n.note}</Text>
-            </View>
+        </Item>
+        <Item id="agents" title="Agents">
+          {vendors.map((v) => keyRow(v))}
+          {mine.map((v) => keyRow(v))}
+          {!!orSpec &&
+            keyRow(
+              orSpec,
+              <Text
+                style={[F.small, { color: T.ink }]}
+                onPress={wrap(async () => {
+                  if (await p.onSignIn())
+                    setMsg("Signed in — Claude, GPT, Grok, Gemini, DeepSeek and Llama are ready.");
+                })}
+              >
+                Sign in
+              </Text>,
+            )}
+          {!!msg && <Text style={[F.small, { color: T.ink }]}>{msg}</Text>}
+          <Text style={[F.small, { color: T.ink }]} onPress={() => setAdding(!adding)}>
+            {adding ? "−" : "+"} Add your own agent
+          </Text>
+          {adding && <CustomForm locked={!LIMITS[p.tier].customAgents} onAdd={p.onAddCustom} onPro={p.onPro} />}
+          <View style={s.keyRow}>
+            <Text style={[F.head, { width: 92 }]}>Muse</Text>
+            <Text style={[F.small, { flex: 1 }]}>
+              {paired ? "Paired ✓" : p.settings.relay_code ? `Code: ${p.settings.relay_code}` : "Publishes for you"}
+            </Text>
+            {!paired && (
+              <Text style={[F.small, { color: T.ink }]} onPress={wrap(p.muse.pair)}>
+                {p.settings.relay_code ? "New code" : "Pair"}
+              </Text>
+            )}
+            {!!p.settings.relay_token && (
+              <Text style={[F.small, { color: T.faint }]} onPress={wrap(p.muse.unpair)}>
+                Unpair
+              </Text>
+            )}
           </View>
-        ))}
-      </Section>
-      <Section title="Your own agents">
-        {mine.map(row)}
-        <CustomForm locked={!LIMITS[p.tier].customAgents} onAdd={p.onAddCustom} onPro={p.onPro} />
-      </Section>
-      <Section title="Muse · publishes for you">
-        <Text style={F.small}>
-          {paired
-            ? "Muse is paired. Approved work is handed to Muse according to your Team setting."
-            : p.settings.relay_code
-              ? `In Muse, connect “Passfair” and enter this one-time code (24 h): ${p.settings.relay_code}`
-              : "Pair your own Muse so finished work goes there to publish, and publishing problems come back here."}
-        </Text>
-        <Row>
-          {!paired && (
-            <Btn
-              label={p.settings.relay_code ? "New code" : "Pair with Muse"}
-              small
-              disabled={busy}
-              onPress={wrap(p.muse.pair)}
-            />
-          )}
-          {!!p.settings.relay_token && <Btn label="Check" small disabled={busy} onPress={wrap(p.muse.check)} />}
-          {!!p.settings.relay_token && (
-            <Btn label="Unpair" small kind="danger" disabled={busy} onPress={wrap(p.muse.unpair)} />
-          )}
-        </Row>
-      </Section>
-      <Section title="Plan">
-        <Text style={F.body}>
-          {p.tier === "pro" ? "Passfair Pro is active." : "Free plan. Pro features are shown with 🔒."}
-        </Text>
-        <Row>
-          {p.tier !== "pro" && <Btn label="See Pro" kind="primary" small onPress={p.onPro} />}
-          <Btn label="Restore purchases" small onPress={p.onRestore} />
-          {p.tier === "pro" && <Btn label="Manage subscription" small onPress={p.onManage} />}
-        </Row>
-      </Section>
-      <Section title="About">
-        <Btn label="Watch a sample run" kind="plain" small onPress={p.onSample} />
-        <Btn label="Privacy policy ↗" kind="plain" small onPress={() => Linking.openURL(PRIVACY)} />
-        <Text style={F.small}>
-          Keys stay in this phone's keychain and go only to the agent's own vendor. No analytics.
-        </Text>
-      </Section>
+        </Item>
+        <Item id="bill" title="Invoice & Bill">
+          <Text style={F.body}>{p.tier === "pro" ? "Passfair Pro is active." : "Free plan."}</Text>
+          <Row>
+            {p.tier !== "pro" && <Btn label="See Pro" small kind="soft" onPress={p.onPro} />}
+            {p.tier === "pro" && <Btn label="Manage subscription" small kind="soft" onPress={p.onManage} />}
+            <Btn label="Restore purchases" small kind="soft" onPress={p.onRestore} />
+            <Btn label="Invoices & receipts ↗" small kind="soft" onPress={() => Linking.openURL(RECEIPTS)} />
+          </Row>
+          <Text style={F.small}>
+            {Platform.OS === "android"
+              ? "Receipts are issued by Google Play and listed in your Play order history."
+              : "Receipts are issued by Apple and emailed to your Apple ID; past purchases are listed at reportaproblem.apple.com."}
+          </Text>
+        </Item>
+        <Item id="brainstorm" title="Brainstorm">
+          <Text style={F.small}>The agents debate the topic you just asked, two rounds, then stop.</Text>
+          <View style={{ alignItems: "flex-start" }}>
+            <Btn label="Debate this topic" small kind="soft" disabled={!p.canDebate} onPress={p.onDebate} />
+          </View>
+        </Item>
+        <Item id="report" title="Report">
+          <Text style={F.small}>Report AI-generated content: pick the conversation.</Text>
+          {!p.jobs.length && <Text style={F.small}>No conversations yet.</Text>}
+          {recent.slice(0, 10).map((j) => (
+            <Pressable key={j.id} onPress={() => p.onReportJob(j.id)} style={s.histRow}>
+              <Text style={F.body} numberOfLines={1}>
+                {j.goal}
+              </Text>
+              <Text style={F.small}>{new Date(j.created).toLocaleDateString()}</Text>
+            </Pressable>
+          ))}
+        </Item>
+        <Item id="about" title="About">
+          <Btn label="Watch a sample" kind="plain" small onPress={p.onSample} />
+          <Text style={F.small}>
+            Ask once: every AI you connect answers on its own, side by side. Follow-up questions are answered together.
+          </Text>
+        </Item>
+        <Item id="policy" title="Policy">
+          <Btn label="Privacy policy ↗" kind="plain" small onPress={() => Linking.openURL(PRIVACY)} />
+          <Btn label="Terms of use ↗" kind="plain" small onPress={() => Linking.openURL(TERMS)} />
+          <Text style={F.small}>
+            Keys stay in this phone's keychain and go only to the agent's own vendor. No analytics.
+          </Text>
+        </Item>
+      </View>
     </Sheet>
   );
 }
@@ -917,4 +1025,13 @@ const s = StyleSheet.create({
   form: { backgroundColor: T.surface, borderRadius: 20, padding: 14, gap: 10 },
   agentRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
   histRow: { paddingVertical: 12, gap: 4 },
+  keyRow: { flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44 },
+  menuHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
 });

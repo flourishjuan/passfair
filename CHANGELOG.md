@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0 — hotfix 13 (collection of each vendor's work — redo per spec, build 33 review)
+- Every AI you connect answers on its own, under its own name (Claude, GPT, Grok, Gemini …), side by side; nobody rewrites anybody. The draft → review → revise pipeline is no longer used for new questions.
+- The user's hard constraints (market, currency, number of items, budget, language) are read from their words and pinned for every agent; an answer that slips (e.g. Chinese platforms or yuan for a North-America question, or missing items) is redone once, told exactly what was wrong.
+- Broad questions first offer a few short directions; answers then come one screen at a time ("Continue · 11–20 of 100"), and a list of N items gets all N from every agent.
+- Follow-up questions are answered together: agents reply in turn, each reading the others first.
+- ••• page is one level of rows: History (with the team notebook), Agents (app name + key field on one line, OpenRouter last), Invoice & Bill, Brainstorm (debate the current topic, two rounds), Report (pick a conversation), About, Policy.
+- Clean conversation: white page, no dark bubbles or coloured cards, only the AI's name above its answer, no internal ids, revision notes, rounds or app messages; answers can't be selected or copied.
+- The sample is a floating card on the home screen that can be closed (also in ••• → About).
+
 ## 2.0.0 — hotfix 12 (graded reviews, disputed facts)
 - Reviewers grade accuracy (checked against the material and research sources), clarity and completeness, 0–10 each; a draft passes only if all three are 7 or more. The result shows "Accuracy 8 · Clarity 9 · Completeness 7 · 1 revision".
 - Web research ends with "where sources disagree"; every agent is told those points are uncertain and must not be stated as fact.

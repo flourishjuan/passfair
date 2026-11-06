@@ -9,12 +9,15 @@ const SIMP = /[这们为说国会个来时对学关与从实经发点开体还�
 const TRAD = /[這們為說國會個來時對學關與從實經發點開體還過現問題應該麼讓給後動產業務]/g;
 
 const LATIN: [string, RegExp][] = [
-  ["Spanish", /\b(el|la|los|las|que|de|para|con|una|por|cómo|qué|está|necesito|quiero)\b/gi],
-  ["Portuguese", /\b(o|os|as|que|de|para|com|uma|não|você|está|preciso|quero|é)\b/gi],
-  ["French", /\b(le|la|les|des|que|pour|avec|une|est|c'est|je|vous|nous|pas|comment)\b/gi],
-  ["German", /\b(der|die|das|und|ist|nicht|mit|für|ich|wir|sie|ein|eine|wie|bitte)\b/gi],
-  ["Italian", /\b(il|lo|gli|che|di|per|con|una|non|sono|come|voglio|questo)\b/gi],
-  ["English", /\b(the|and|is|are|to|of|for|with|what|how|should|we|i|you|our|my|this|that|it)\b/gi],
+  ["Spanish", /(?<!\p{L})(el|la|los|las|que|de|para|con|una|por|cómo|qué|está|necesito|quiero)(?!\p{L})/giu],
+  ["Portuguese", /(?<!\p{L})(o|os|as|que|de|para|com|uma|não|você|está|preciso|quero|é)(?!\p{L})/giu],
+  [
+    "French",
+    /(?<!\p{L})(le|la|les|des|que|pour|avec|une|est|c'est|je|vous|nous|pas|comment|moi|un|du|au|aux|dans|sur|mon|mes)(?!\p{L})/giu,
+  ],
+  ["German", /(?<!\p{L})(der|die|das|und|ist|nicht|mit|für|ich|wir|sie|ein|eine|wie|bitte)(?!\p{L})/giu],
+  ["Italian", /(?<!\p{L})(il|lo|gli|che|di|per|con|una|non|sono|come|voglio|questo)(?!\p{L})/giu],
+  ["English", /(?<!\p{L})(the|and|is|are|to|of|for|with|what|how|should|we|i|you|our|my|this|that|it)(?!\p{L})/giu],
 ];
 
 /** The language a piece of text is written in, or null when it is too short or unclear to tell. */
@@ -46,7 +49,7 @@ export function detectLanguage(text: string | null | undefined): string | null {
   const hint: Record<string, number> = {
     Spanish: count(t, /[¿¡ñ]/g) * 3,
     Portuguese: count(t, /[ãõ]/g) * 3,
-    French: count(t, /[èêëœ]/g) * 2,
+    French: count(t, /[èêëœàçù]/g) * 2,
     German: count(t, /[äöüß]/g) * 3,
   };
   const scored = LATIN.map(([l, re]) => [l, count(t, re) + (hint[l] || 0)] as [string, number]).sort(
