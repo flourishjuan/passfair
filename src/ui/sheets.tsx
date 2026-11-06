@@ -1,7 +1,6 @@
-import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Clipboard from "expo-clipboard";
 import React, { useState } from "react";
-import { Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
+import { Image, Linking, Platform, Pressable, Share, StyleSheet, Text, View } from "react-native";
 import { seatName } from "../core/brainstorm";
 import { detectKey } from "../core/oauth";
 import { profileFor } from "../core/profiles";
@@ -399,14 +398,15 @@ export function MenuSheet(p: {
       )}
     </View>
   );
-  const ICON: Record<string, React.ComponentProps<typeof Ionicons>["name"]> = {
-    history: "time-outline",
-    agents: "people-outline",
-    bill: "receipt-outline",
-    brainstorm: "bulb-outline",
-    report: "document-text-outline",
-    about: "information-circle-outline",
-    policy: "shield-checkmark-outline",
+  // Plain images (no icon font): an icon font module crashed the iPhone build at launch.
+  const ICON: Record<string, number> = {
+    history: require("../../assets/menu/history.png"),
+    agents: require("../../assets/menu/agents.png"),
+    bill: require("../../assets/menu/bill.png"),
+    brainstorm: require("../../assets/menu/brainstorm.png"),
+    report: require("../../assets/menu/report.png"),
+    about: require("../../assets/menu/about.png"),
+    policy: require("../../assets/menu/policy.png"),
   };
   const Item = ({ id, title, children }: { id: string; title: string; children: React.ReactNode }) => (
     <View>
@@ -416,7 +416,13 @@ export function MenuSheet(p: {
         accessibilityRole="button"
         accessibilityState={{ expanded: open === id }}
       >
-        <Ionicons name={ICON[id] || "ellipse-outline"} size={22} color={T.ink} />
+        <View style={{ width: 22, height: 24, justifyContent: "center" }}>
+          <Image
+            source={ICON[id]}
+            style={{ width: 22, height: 22, tintColor: T.ink }}
+            accessibilityIgnoresInvertColors
+          />
+        </View>
         <Text style={[F.head, { flex: 1 }]}>{title}</Text>
       </Pressable>
       {open === id && <View style={{ gap: 10, paddingTop: 8, paddingBottom: 12, paddingLeft: 48 }}>{children}</View>}
