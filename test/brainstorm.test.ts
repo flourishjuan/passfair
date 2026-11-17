@@ -355,7 +355,7 @@ test("reasoning models (gpt-5-mini, o4-mini, Gemini 2.5, Grok 4) get room to thi
   );
 });
 
-test("a failing cross-checker does not stop the job: it continues with one reviewer and says so", async () => {
+test("a failing cross-checker pauses the run resumably instead of silently dropping the second review", async () => {
   const job = newJob({
     goal: "Spec",
     mode: "live",
@@ -374,9 +374,10 @@ test("a failing cross-checker does not stop the job: it continues with one revie
         : "Buyer: export managers. ".repeat(20);
     return resp({ content: [{ type: "text", text }], stop_reason: "end_turn" });
   }) as any;
-  await runJob(job, { ...quiet, credential: cred, fetcher: f });
-  assert.equal(job.status, "awaiting_review");
-  assert.equal(job.outcome, "approved_by_reviewer");
-  assert.equal(job.assignments.verifier, undefined);
-  assert.ok(job.events.some((e) => e.role === "check" && /Cross-checker unavailable/.test(e.text)));
+  await assert.rejects(
+    runJob(job, { ...quiet, credential: cred, fetcher: f }),
+    (e: any) => e?.resumable === true && /cross-checker is unreachable/i.test(e.message),
+  );
+  assert.equal(job.rounds!.length, 0, "no verdict was recorded without the cross-check");
+  assert.equal(job.assignments.verifier, "openai", "the second reviewer is kept for the resume");
 });

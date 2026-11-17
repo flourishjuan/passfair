@@ -275,6 +275,9 @@ export function useStudio(toast: Toast, tier: Tier) {
           if (bgCutRef.current) j.error = "interrupted"; // paused by the system, resumes on return
           upsert({ ...j });
         } else if (j.status === "awaiting_review" || (j.flow === "collection" && j.status === "partial")) {
+          // The run made it through: the reviewer-outage retry bookkeeping starts fresh next time.
+          delete j.autoResumeAttempts;
+          delete j.lastAutoResumeAt;
           // First real brief finished: tell the invite service once (this is what makes an invite count).
           if (j.mode === "live" && j.usage.calls > 0 && !settingsRef.current.activatedSent)
             referral
@@ -298,6 +301,13 @@ export function useStudio(toast: Toast, tier: Tier) {
           j.status = "stopped";
           j.error = "interrupted";
           upsert({ ...j });
+        } else if (e?.resumable) {
+          // A pause the run recovers from by itself (e.g. the reviewers were unreachable): the draft is
+          // saved, and the run resumes at the review step when Passfair is next in the foreground.
+          j.status = "stopped";
+          j.error = "review_paused";
+          upsert({ ...j });
+          toast(e?.message || "Paused - the run resumes by itself.");
         } else {
           j.status = "failed";
           j.error = e?.message || "Failed.";
@@ -325,12 +335,21 @@ export function useStudio(toast: Toast, tier: Tier) {
     const resume = () => {
       if (runningRef.current || AppState.currentState !== "active") return;
       const j = jobsRef.current.find((x) => shouldAutoResume(x));
-      if (j) run(j).catch(() => {});
+      if (j) {
+        if (j.error === "review_paused") {
+          // Each automatic resume retries the review step - a real reviewer API call. Count it so
+          // repeated opens cannot retry without bound; after the cap, carrying on is a tap on Resume.
+          j.autoResumeAttempts = (j.autoResumeAttempts ?? 0) + 1;
+          j.lastAutoResumeAt = new Date().toISOString();
+          upsert({ ...j });
+        }
+        run(j).catch(() => {});
+      }
     };
     resume();
     const sub = AppState.addEventListener("change", (st) => st === "active" && setTimeout(resume, 400));
     return () => sub.remove();
-  }, [ready, run]);
+  }, [ready, run, upsert]);
 
   // Checks files against the plan and picks the agent that will look at them.
   function prepareFiles(files: Attachment[]) {

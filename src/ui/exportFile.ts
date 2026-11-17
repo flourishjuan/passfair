@@ -5,7 +5,7 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { Platform } from "react-native";
 import { type ExportFormat, formats, toDocx, toHtml, toPptx } from "../core/export";
-import { type Job, lastDeliverable } from "../core/orchestrator";
+import { type Job, approvalOf, lastDeliverable } from "../core/orchestrator";
 import { collectionText, vendorName } from "../core/collection";
 
 export type { ExportFormat };
@@ -68,7 +68,7 @@ export function exportMeta(job: Job) {
     footer:
       job.flow === "collection"
         ? "Made with Passfair"
-        : `Made with Passfair · ${approved ? (job.assignments.verifier ? "approved by both reviewers" : "reviewer approved") : "read critically"} · v${job.version || 1}`,
+        : `Made with Passfair · ${approved ? (approvalOf(job) === "both" ? "approved by both reviewers" : "approved by one reviewer (no cross-check)") : "read critically"} · v${job.version || 1}`,
     filename: `passfair-${job.id.slice(0, 8)}`,
   };
 }

@@ -128,7 +128,7 @@ test("revision must answer issues point by point; notes are kept out of the deli
   assert.ok(seen.some((p) => /I1 \[high\]/.test(p)));
 });
 
-test("missing revision notes after a rejected round is flagged", () => {
+test("missing revision notes after a rejected round: flagged as an advisory, never a blocker", () => {
   const job = liveJob("Short brief");
   job.events.push(
     {
@@ -152,8 +152,11 @@ test("missing revision notes after a rejected round is flagged", () => {
   );
   job.rounds = [{ round: 1, passed: false, minScore: 4, verdicts: [] }];
   const g = qualityGate(job, 2);
-  assert.equal(g.verdict, "revise");
-  assert.match(g.issues.map((i) => i.problem).join(" "), /point-by-point/);
+  assert.equal(g.verdict, "pass", "a notes-format gap alone must not block the round");
+  const note = g.issues.find((i) => /point-by-point/.test(i.problem));
+  assert.ok(note, "the gap is still flagged");
+  assert.equal(note!.severity, "low", "flagged as an advisory");
+  assert.match(g.summary, /revision notes/);
 });
 
 test("helpers: notes split, sameness, prompts forbid placeholders and demand numbered criteria", () => {

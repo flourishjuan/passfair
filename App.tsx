@@ -16,9 +16,10 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Attachment } from "./src/core/material";
-import { type JobEvent, lastDeliverable, qualityOf } from "./src/core/orchestrator";
+import { type JobEvent, approvalOf, lastDeliverable, qualityOf } from "./src/core/orchestrator";
 import { DEPTH, type Depth, LIMITS } from "./src/core/plan";
 import { shortName } from "./src/core/providers";
+import { AUTO_RESUME_MAX_ATTEMPTS } from "./src/core/resume";
 import { settings as settingsStore } from "./src/store/storage";
 import { fromClipboard, fromLink, pickFiles, pickMedia } from "./src/ui/attach";
 import { type ExportChoice, exportJob, exportLabel, exportOrder } from "./src/ui/exportFile";
@@ -355,7 +356,11 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                       <Text style={F.small}>
                         {job.error === "interrupted"
                           ? "Paused while Passfair was in the background — it carries on when you open the app."
-                          : "Stopped."}
+                          : job.error === "review_paused"
+                            ? (job.autoResumeAttempts ?? 0) >= AUTO_RESUME_MAX_ATTEMPTS
+                              ? "Paused: the reviewers could not be reached. The draft is saved - automatic retries are used up; tap Resume to try again."
+                              : "Paused: the reviewers could not be reached. The draft is saved - it retries the review by itself when you open the app."
+                            : "Stopped."}
                       </Text>
                     )}
                     <Row>
@@ -430,7 +435,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                           : job.status === "delivered"
                             ? "Handed off to Muse — waiting for publish"
                             : job.outcome === "approved_by_reviewer"
-                              ? `Final · approved by ${job.assignments.verifier ? "both reviewers" : "the reviewer"}${job.finalRound ? ` (round ${job.finalRound})` : ""}`
+                              ? `Final · approved by ${approvalOf(job) === "both" ? "both reviewers" : "one reviewer"}${job.finalRound ? ` (round ${job.finalRound})` : ""}`
                               : job.outcome === "round_limit_reached"
                                 ? `Final · not approved by both — best round ${job.finalRound ?? "?"}, read critically`
                                 : "Stopped"
@@ -446,13 +451,22 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                               : `${q.revisions} revision${q.revisions > 1 ? "s" : ""}`}
                           </Text>
                         ) : null)(qualityOf(job))}
+                    {job.mode === "live" && approvalOf(job) === "single" && (
+                      <Text style={F.small}>
+                        One reviewer approved this; no second agent cross-checked it. Connect another agent in the ••• menu for a cross-check.
+                      </Text>
+                    )}
                     {(job.final || lastDeliverable(job)) && <Markdown text={job.final || lastDeliverable(job)} />}
                     {job.mode === "live" && <RunFacts job={job} />}
                     {job.status === "stopped" && (
                       <Text style={[F.small, { color: T.ink }]}>
                         {job.error === "interrupted"
                           ? "Paused while Passfair was in the background — it carries on by itself when you open the app. "
-                          : "You stopped the run. "}
+                          : job.error === "review_paused"
+                            ? (job.autoResumeAttempts ?? 0) >= AUTO_RESUME_MAX_ATTEMPTS
+                              ? "Paused: the reviewers could not be reached. The draft is saved - automatic retries are used up. "
+                              : "Paused: the reviewers could not be reached. The draft is saved - it retries the review by itself when you open the app. "
+                            : "You stopped the run. "}
                         {job.events.some((e) => e.role === "worker")
                           ? "Tap Resume to carry on from the last finished step; nothing is lost."
                           : job.events.some((e) => e.role === "decider")

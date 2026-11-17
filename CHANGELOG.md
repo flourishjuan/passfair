@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased - collaboration reliability (prepared 2026-11-16, tested, not yet shipped)
+- A round is no longer failed only because the worker skipped the "REVISION NOTES" format: missing notes are now a visible advisory. The content checks still block: placeholders, an unchanged draft after rejection, too-thin answers, internal ids.
+- A reviewer or cross-checker API failure no longer aborts the run, and no longer quietly drops the second review either: the run pauses, the draft is saved, and it resumes by itself at the review step when the app is next opened (within 6 hours). A round is never approved with fewer reviews than the job was set up with, and never on the automatic check alone.
+- Automatic review retries are bounded: each retry is a real reviewer call, so there are at most 3 automatic attempts, at least 30 minutes apart; after that the paused card says the retries are used up and carrying on is a tap on Resume.
+- A run stopped mid-round (app closed, reviewer outage) resumes by reviewing the saved draft instead of paying for a new one.
+- A result approved by one reviewer only now says that no second agent cross-checked it, and suggests connecting one.
+
 ## 2.0.0 — hotfix 13 (collection of each vendor's work — redo per spec, build 33 review)
 - Every AI you connect answers on its own, under its own name (Claude, GPT, Grok, Gemini …), side by side; nobody rewrites anybody. The draft → review → revise pipeline is no longer used for new questions.
 - The user's hard constraints (market, currency, number of items, budget, language) are read from their words and pinned for every agent; an answer that slips (e.g. Chinese platforms or yuan for a North-America question, or missing items) is redone once, told exactly what was wrong.

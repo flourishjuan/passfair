@@ -2,7 +2,7 @@
   "expo": {
     "name": "Passfair",
     "slug": "passfair",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "passfair",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "bundleIdentifier": "ai.agentsfair.passfair",
-      "buildNumber": "1",
+      "buildNumber": "24",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -27,7 +27,7 @@
     },
     "android": {
       "package": "ai.agentsfair.passfair",
-      "versionCode": 1,
+      "versionCode": 7,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",

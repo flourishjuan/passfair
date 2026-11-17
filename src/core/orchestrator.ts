@@ -1,5 +1,9 @@
 // The collaboration loop: Planner → Worker → (Polisher) → Reviewer + Cross-checker → (revise → review)* → hand off.
 // Cross-check (1.2): each round is reviewed by two agents from different vendors; a round passes only when both pass.
+// A reviewer that cannot be reached pauses the run resumably instead of failing it or quietly dropping a seat:
+// the draft is saved, the run resumes at the review step, and a round never passes with fewer reviews than
+// configured (or on the automatic check alone). Format gaps (missing revision notes) stay visible as
+// advisories; only content problems block a round.
 // The loop always runs at least `minRounds` rounds, stops early only on a full pass after that, never exceeds
 // `maxRounds`, and the final version is the best-reviewed round (later rounds cannot silently make things worse).
 // External feedback (a publishing problem reported by Muse, or a new instruction typed by the user)
@@ -179,6 +183,9 @@ export interface Job {
   version: number;
   error?: string;
   created: string;
+  /** Automatic resume bookkeeping for a reviewer-outage pause (bounded paid retries; see resume.ts). */
+  autoResumeAttempts?: number;
+  lastAutoResumeAt?: string;
   origin?: { source: "you" | "muse"; orderId?: string };
   handoffs: { deliverableId: string; version: number; at: string; auto: boolean }[];
   rounds?: RoundRecord[];
@@ -498,20 +505,26 @@ export function qualityGate(job: Job, round: number): Review {
   }
   if (prev && !prev.passed) {
     const w = workerEv;
+    // Missing notes never block a round on their own: the reviewers judge the deliverable itself, and the
+    // sameness check above already catches a revision that changed nothing. The gap stays visible as an
+    // advisory so it can be seen without stalling the run on a format requirement.
     if (w && !w.notes)
       issues.push({
-        severity: "medium",
+        severity: "low",
         where: "revision notes",
         problem: "No point-by-point answer to the previous round's issues.",
         fix: `Add "${NOTES_MARK}" with one line per issue id.`,
       });
   }
+  const blocking = issues.filter((i) => i.severity !== "low");
   return {
-    verdict: issues.length ? "revise" : "pass",
+    verdict: blocking.length ? "revise" : "pass",
     score: null,
-    summary: issues.length
-      ? `Automatic check found ${issues.length} problem${issues.length > 1 ? "s" : ""} before any reviewer could approve.`
-      : "Automatic check passed.",
+    summary: blocking.length
+      ? `Automatic check found ${blocking.length} problem${blocking.length > 1 ? "s" : ""} before any reviewer could approve.`
+      : issues.length
+        ? "Automatic check passed. Advisory: the worker added no revision notes; the reviewers judge the deliverable itself."
+        : "Automatic check passed.",
     issues,
   };
 }
@@ -999,26 +1012,32 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
     if (aborted()) return;
     push("planner", 0, out);
   }
-  let round = job.events.filter((e) => e.role === "worker").length + 1;
+  // A draft saved but never fully reviewed (the run stopped mid-round: app closed, reviewer outage)
+  // is picked up at its review step, not rewritten - the work and the tokens already spent are kept.
+  const drafted = job.events.filter((e) => e.role === "worker").length;
+  const partial = drafted > 0 && !job.rounds!.some((r) => r.round === drafted) ? drafted : null;
+  let round = partial ?? drafted + 1;
   while (round <= job.maxRounds) {
     if (aborted()) return;
-    job.current = { role: "worker", round };
-    save(job);
-    const draft = await call("worker", round);
-    if (aborted()) return;
-    const split = splitNotes(draft.text);
-    const before = lastDeliverable(job);
-    const revising = round > 1 || job.events.some((e) => e.role === "feedback");
-    if (job.saver?.sectionEdits && revising && before && sectionsOf(before).length >= 2) {
-      const m = mergeSections(before, split.deliverable);
-      push(
-        "worker",
-        round,
-        { ...draft, text: m.text },
-        { ...(split.notes ? { notes: split.notes } : {}), ...(m.full ? {} : { patched: m.changed }) },
-      );
-    } else push("worker", round, { ...draft, text: split.deliverable }, split.notes ? { notes: split.notes } : {});
-    if (hasPolisher) {
+    if (partial !== round) {
+      job.current = { role: "worker", round };
+      save(job);
+      const draft = await call("worker", round);
+      if (aborted()) return;
+      const split = splitNotes(draft.text);
+      const before = lastDeliverable(job);
+      const revising = round > 1 || job.events.some((e) => e.role === "feedback");
+      if (job.saver?.sectionEdits && revising && before && sectionsOf(before).length >= 2) {
+        const m = mergeSections(before, split.deliverable);
+        push(
+          "worker",
+          round,
+          { ...draft, text: m.text },
+          { ...(split.notes ? { notes: split.notes } : {}), ...(m.full ? {} : { patched: m.changed }) },
+        );
+      } else push("worker", round, { ...draft, text: split.deliverable }, split.notes ? { notes: split.notes } : {});
+    }
+    if (hasPolisher && !(partial === round && has((e) => e.role === "polisher" && e.round === round))) {
       job.current = { role: "polisher", round };
       save(job);
       const polished = await call("polisher", round);
@@ -1028,7 +1047,8 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
     const verdicts: RoundRecord["verdicts"] = [];
     if (job.mode === "live") {
       const gate = qualityGate(job, round);
-      if (gate.verdict === "revise") {
+      // Blocking findings and advisories both stay visible; only blocking findings fail the round.
+      if (gate.issues.length && !has((e) => e.role === "check" && e.round === round && !!e.review)) {
         job.events.push({
           role: "check",
           round,
@@ -1065,27 +1085,33 @@ export async function runJob(job: Job, deps: RunDeps): Promise<void> {
       } catch (e: any) {
         deps.onLive?.(liveKey(r, round), null);
         if (aborted()) return;
-        // The cross-checker failing must not kill the job: carry on with one reviewer and say so.
-        if (r !== "verifier") throw e;
-        delete job.assignments.verifier;
-        checkers.splice(checkers.indexOf("verifier"), 1);
-        job.events.push({
-          role: "check",
-          round,
-          provider: "passfair",
-          model: "rules",
-          text: `Cross-checker unavailable (${e?.message || "error"}). Continuing with one reviewer.`,
-          usage: { input: 0, output: 0 },
-          at: new Date().toISOString(),
-          failed: true,
-        });
-        save(job);
-        continue;
+        // A reviewer that cannot answer pauses the run resumably. It does NOT fall back to fewer reviews:
+        // this job was configured with two independent reviews, so a one-reviewer pass is never recorded
+        // silently. The draft is saved and the run resumes at this review step; no new event is added, so
+        // repeated pauses never extend the auto-resume window.
+        const err = new Error(
+          `${r === "verifier" ? "The cross-checker" : "The reviewer"} is unreachable right now (${e?.message || "error"}), so this round could not be fully reviewed. The draft is saved; the run resumes at the review step.`,
+        ) as Error & { resumable?: boolean };
+        err.resumable = true;
+        throw err;
       }
       if (aborted()) return;
       const review = parseReview(rev.text, job.mode === "live");
       push(r, round, rev, { review });
       verdicts.push({ role: r, provider: rev.provider, verdict: review.verdict, score: review.score });
+    }
+    // A round must never pass on the automatic check alone. If no reviewer could answer and the gate
+    // found nothing, pause resumably: the draft is saved and the run picks up at this review step.
+    if (
+      job.mode === "live" &&
+      !verdicts.some((v) => v.role === "reviewer" || v.role === "verifier") &&
+      verdicts.every((v) => v.verdict === "pass")
+    ) {
+      const err = new Error(
+        "Both reviewers are unreachable right now, so this round could not be reviewed. The draft is saved; the run resumes at the review step.",
+      ) as Error & { resumable?: boolean };
+      err.resumable = true;
+      throw err;
     }
     const passed = verdicts.every((v) => v.verdict === "pass");
     const scores = verdicts.map((v) => v.score).filter((x): x is number => x !== null);
@@ -1113,6 +1139,14 @@ export function deliverableOf(job: Job, round: number): string {
     [...job.events].reverse().find((e) => (e.role === "polisher" || e.role === "worker") && e.round === round)?.text ||
     ""
   );
+}
+
+/** Who approved the final round: both reviewers, or one alone (the other was unreachable or never connected). */
+export function approvalOf(job: Job): "both" | "single" | null {
+  if (job.outcome !== "approved_by_reviewer" || !job.finalRound) return null;
+  const vs = (job.rounds || []).find((r) => r.round === job.finalRound)?.verdicts || [];
+  const passed = (role: Role) => vs.some((v) => v.role === role && v.verdict === "pass");
+  return passed("reviewer") && passed("verifier") ? "both" : "single";
 }
 
 /** The final round's grades (lowest across reviewers) and how many revisions it took, for the result header. */
@@ -1217,5 +1251,5 @@ export function newJob(input: {
 export function packageFor(j: Job): string {
   if (j.mode === "demo")
     throw new Error("This was the scripted demo — no AI wrote it. Connect an AI and send a real brief.");
-  return `${j.final || lastDeliverable(j)}\n\n---\nFrom Passfair · job ${j.id.slice(0, 8)} · version ${j.version || 1} · ${j.outcome === "approved_by_reviewer" ? (j.assignments.verifier ? "approved by both reviewers" : "reviewer approved") : "not approved within the round limit — read critically"}\nIf publishing or deploying this fails, send the error back to Passfair (job ${j.id.slice(0, 8)}) so the team can fix it.`;
+  return `${j.final || lastDeliverable(j)}\n\n---\nFrom Passfair · job ${j.id.slice(0, 8)} · version ${j.version || 1} · ${j.outcome === "approved_by_reviewer" ? (approvalOf(j) === "both" ? "approved by both reviewers" : "approved by one reviewer (no cross-check)") : "not approved within the round limit — read critically"}\nIf publishing or deploying this fails, send the error back to Passfair (job ${j.id.slice(0, 8)}) so the team can fix it.`;
 }
