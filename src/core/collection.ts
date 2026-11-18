@@ -8,6 +8,7 @@
 // The user only ever sees the agents' own words — no internal ids, revision notes or round numbers.
 import { detectLanguage, languageFor, languageRule } from "./language";
 import type { Job, JobEvent, LiveTurn, RunDeps } from "./orchestrator";
+import { BS_SYSTEM } from "./brainstorm";
 import { complete, getProvider, type ProviderId, type Usage } from "./providers";
 
 export interface Constraints {
@@ -36,6 +37,20 @@ export interface CollectionState {
 
 export const SEG_ITEMS = 10; // list items per screen
 const SCREEN = "about one phone screen (≈250 words, ≈450 characters in Chinese or Japanese)";
+// Build briefs are exempt from the one-screen limit: the deliverable must arrive complete.
+const lengthRule = (build: boolean) =>
+  build
+    ? "This asks for something made: deliver it COMPLETE — full working code (every file in its own fenced block, file name on the fence line or in the first line as a comment) or the full document/design — however long it needs to be. Do not cut it short or split it across screens."
+    : `Keep this part to ${SCREEN}; the user can ask for more.`;
+
+/** Notes the seeing agent wrote about the attached files, for prompts of agents that cannot see them. */
+export function mediaNotes(job: Job): string {
+  return job.events.find((e) => e.role === "seer" && !e.failed)?.text || "";
+}
+const notesPart = (job: Job) => {
+  const n = mediaNotes(job);
+  return n ? `NOTES ON THE ATTACHED FILES (written by ${job.events.find((e) => e.role === "seer" && !e.failed)?.model || "the seeing agent"}, the agent that could see them — work from these; you cannot see the files yourself):\n${n.slice(0, 8000)}` : "";
+};
 
 /* ---------- hard constraints, read from the user's own words ---------- */
 
@@ -207,7 +222,39 @@ export function numbered(text: string): number[] {
 /* ---------- prompts ---------- */
 
 const SOLO = `You are one of several independent AI experts. Each expert answers the user separately and the user compares the answers side by side, so give YOUR OWN best answer, in your own voice. Never mention other experts, the app, internal ids, drafts, rounds or reviews.
-Answer the question directly and concretely. Every number states its basis (a source, or "estimate:" with a one-line reason). No filler, no self-praise, no scores like "10/10".`;
+Answer the question directly and concretely. Every number states its basis (a source, or "estimate:" with a one-line reason). No filler, no self-praise, no scores like "10/10".
+You CAN write complete, working code, documents and designs. When the question asks for something made (software, a demo, a game, a website, a tool, a document), your answer IS that deliverable: complete and ready to use, not advice about making it. Code ships as full files, each in its own fenced code block with the file name on the fence line (\`\`\`index.html) or in the first line as a comment, plus the exact commands to run it. Never give up on making the deliverable or redirect the user to hiring developers, buying services or using other tools instead of answering. Where a detail is missing, state a one-line assumption and deliver anyway. Two honest exceptions, stated in one line each: (1) what a text answer genuinely cannot do — it cannot run, compile or install anything on the user's device, so say what must be run and by whom — and (2) anything you would decline anywhere for safety or policy reasons: keep declining it and say why. Everything that CAN be delivered as text must be delivered, in full.`;
+
+// A brief that asks for something buildable gets the full deliverable, not a one-screen teaser.
+export function wantsBuild(text: string): boolean {
+  return /\b(demo|prototype|app(lication)?|website|web\s?page|game|tool|script|plugin|mini-?program|code|software)\b/i.test(
+    String(text || ""),
+  ) || /演示|样例|原型|游戏|软件|网站|网页|工具|脚本|插件|小程序|应用|程序|代码|开发(一|个|款)?/.test(String(text || ""));
+}
+
+// An answer that declines to build and redirects elsewhere (hire a developer, buy a service) instead of
+// delivering — the failure Juan reported. Only flagged on a build brief that got no code at all.
+const REFUSAL = [
+  /无法(直接)?(为你|为您|帮你|帮您)?(实际)?(提供|生成|编写|撰写|构建|制作|开发|交付|输出)[^。\n]{0,40}(代码|程序|软件|应用|游戏|文件|安装包|可执行|demo)/i,
+  /(不能|无法)(为你|为您|帮您)?(写|编写|生成|构建|开发|制作)[^。\n]{0,20}(完整|可运行|可下载)?的?(代码|程序|软件|应用|游戏)/,
+  /作为(一名|一个)?AI助手[^。\n]{0,30}(无法|不能)/,
+  /\bI (cannot|can't|am not able to|am unable to)\b[^.\n]{0,80}\b(write|build|code|generate|create|deliver|provide)\b/i,
+  /\bas an AI\b[^.\n]{0,60}\b(cannot|can't|unable|not able)\b/i,
+];
+const HANDBACK = [
+  /外包(开发)?团队|聘请(一名|一位)?(开发|程序员)|找(一名|一个|位)?(程序员|开发者|开发团队)|程序员客栈|猪八戒/,
+  /\b(hire|outsourc(e|ing)|find)( a | an )?(developer|programmer|freelancer|agency|dev team)\b/i,
+];
+export function capabilityRefusal(text: string, goal: string): string | null {
+  const t = String(text || "");
+  if (!wantsBuild(goal) || t.includes("```")) return null; // code (or any fenced block) was delivered
+  const hit = REFUSAL.find((re) => re.test(t));
+  const handed = HANDBACK.some((re) => re.test(t));
+  if (!hit && !handed) return null;
+  return hit
+    ? "It claims it cannot write or deliver the code. Require the complete working files, each in its own fenced block with its file name, plus the exact run commands. (Exception: a refusal made for safety or policy reasons stands — in that case it must say so in one line.)"
+    : "It hands the work to outside developers or paid services instead of delivering. Require the complete working deliverable now, written by the agent itself. (Exception: a refusal made for safety or policy reasons stands — in that case it must say so in one line.)";
+}
 
 function scopePrompt(job: Job, c: Constraints) {
   return {
@@ -218,14 +265,16 @@ function scopePrompt(job: Job, c: Constraints) {
   };
 }
 
-function answerPrompt(job: Job, st: CollectionState, seg: number, own: string[]) {
+export function answerPrompt(job: Job, st: CollectionState, seg: number, own: string[]) {
   const c = st.constraints;
+  const build = wantsBuild(job.goal);
   const range = c.count ? { from: (seg - 1) * st.segSize + 1, to: Math.min(seg * st.segSize, c.count) } : null;
   const parts = [
     languageRule(job.lang),
     `QUESTION:\n${job.goal}`,
     constraintBlock(c, st.choice),
     job.knowledge || "",
+    notesPart(job),
     job.context ? `MATERIAL FROM THE USER:\n${job.context.slice(0, 12000)}` : "",
   ];
   if (range) {
@@ -234,13 +283,13 @@ function answerPrompt(job: Job, st: CollectionState, seg: number, own: string[])
       `NOW WRITE ITEMS ${range.from} TO ${range.to} of ${c.count}: a numbered list starting at ${range.from} and ending at ${range.to} — every number present. Each item: a bold name, then one or two lines with what it is, why it fits the constraints, and the key number (startup cost, price or market size, with its basis).${seg === 1 ? " Start with one sentence on how you chose them." : " No introduction."}`,
     );
   } else if (seg === 1) {
-    parts.push(
-      `Write your answer: the answer first, then the reasons. Keep this part to ${SCREEN}; the user can ask for more.`,
-    );
+    parts.push(`Write your answer: the answer first, then the reasons. ${lengthRule(build)}`);
   } else {
     parts.push(
       `YOUR ANSWER SO FAR:\n${own.join("\n\n").slice(-8000)}`,
-      `Continue your answer with the next part (${SCREEN}), going deeper where it matters most. Don't repeat what you already said. If there is nothing important left, say so in one line.`,
+      build
+        ? "Continue the deliverable: the remaining files or sections, complete. Don't repeat what you already wrote. When the deliverable is finished, say so in one line."
+        : `Continue your answer with the next part (${SCREEN}), going deeper where it matters most. Don't repeat what you already said. If there is nothing important left, say so in one line.`,
     );
   }
   return { system: SOLO, prompt: parts.filter(Boolean).join("\n\n"), range };
@@ -260,6 +309,7 @@ function relayPrompt(
       `ORIGINAL QUESTION:\n${job.goal}`,
       constraintBlock(st.constraints, st.choice),
       `EARLIER ANSWERS:\n${answers.slice(-14000)}`,
+      notesPart(job),
       `THE USER NOW ASKS:\n${question}`,
       before.length
         ? `YOUR COLLEAGUES ALREADY REPLIED:\n${before
@@ -267,7 +317,7 @@ function relayPrompt(
             .join("\n\n")
             .slice(-8000)}`
         : "You reply first.",
-      `Keep it to ${SCREEN}.`,
+      lengthRule(wantsBuild(`${job.goal}\n${question}`)),
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -286,7 +336,7 @@ function debatePrompt(job: Job, st: CollectionState, round: number, answers: str
       round === 1
         ? "Round 1: state the two or three points where you most disagree with the others, and why."
         : "Round 2 (last): answer the challenges made to you, say what you now concede, and state your final position in two sentences.",
-      `Keep it under 200 words (or 350 characters in Chinese or Japanese).`,
+      `Keep it under 200 words (or 350 characters in Chinese or Japanese)${wantsBuild(job.goal) ? ", unless you are answering with code or a made deliverable — then give it complete" : ""}.`,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -432,6 +482,50 @@ export async function runCollection(job: Job, deps: RunDeps): Promise<void> {
   }
   if (aborted()) return;
 
+  // 1.5. Attached images / PDFs / video: one agent that can see them describes them for everyone.
+  // Without this the files were validated and stored, then silently never shown to any agent.
+  if (deps.media?.length && job.seer && !job.events.some((e) => e.role === "seer")) {
+    const cred = job.mode === "demo" ? null : deps.credential(job.seer as ProviderId);
+    if (cred) {
+      try {
+        deps.onLive?.("seer", { role: "seer", round: 0, provider: job.seer, model: cred.model, text: "" });
+        const out = await complete(
+          {
+            ...cred,
+            system: `You are one of several independent AI experts answering the user side by side. ${BS_SYSTEM.seer} Write in the user's language.`,
+            prompt: `${languageRule(job.lang)}\n\nBRIEF:\n${job.goal}\n\nDescribe the attached files now.`,
+            maxTokens: 3000,
+            media: deps.media,
+            signal: deps.signal,
+            ...(deps.onLive
+              ? { onDelta: (t: string) => deps.onLive!("seer", { role: "seer", round: 0, provider: job.seer!, model: cred.model, text: t }) }
+              : {}),
+          },
+          fetcher,
+        );
+        add(out.usage);
+        job.events.push(
+          event({ role: "seer", round: 0, provider: job.seer, model: cred.model, text: out.text, usage: out.usage }),
+        );
+      } catch (e: any) {
+        if (aborted()) return;
+        job.events.push(
+          event({
+            role: "seer",
+            round: 0,
+            provider: job.seer,
+            text: `Couldn't read the attached files: ${e?.message || "error"}`,
+            failed: true,
+          }),
+        );
+      } finally {
+        deps.onLive?.("seer", null);
+      }
+      save(job);
+    }
+  }
+  if (aborted()) return;
+
   // 2. The next segment from every agent, at the same time.
   const seg = st.done + 1;
   job.current = { role: "answer", round: seg };
@@ -440,9 +534,18 @@ export async function runCollection(job: Job, deps: RunDeps): Promise<void> {
     panel.map(async (p) => {
       const ap = answerPrompt(job, st, seg, answersOf(job, p));
       const key = `answer|${seg}|${p}`;
-      let r = await ask(p, ap, { role: "answer", round: seg, key });
+      // Build briefs need room for complete files; ordinary answers keep the original 6,000-token cap.
+      const answerCap = wantsBuild(job.goal) ? 8000 : 6000;
+      let r = await ask(p, ap, { role: "answer", round: seg, key }, answerCap);
       // The user's constraints are not optional: one more try, told exactly what was wrong.
-      const problems = constraintProblems(r.text, st.constraints, ap.range || undefined, job.lang);
+      const allProblems = (text: string) => {
+        const ps = constraintProblems(text, st.constraints, ap.range || undefined, job.lang);
+        // Opt-in only (Team → Data): detecting a refusal is free, the redo is an extra paid call.
+        const cr = deps.refusalRedo ? capabilityRefusal(text, job.goal) : null;
+        if (cr) ps.push(cr);
+        return ps;
+      };
+      const problems = allProblems(r.text);
       if (problems.length && !aborted()) {
         const fix = await ask(
           p,
@@ -451,9 +554,9 @@ export async function runCollection(job: Job, deps: RunDeps): Promise<void> {
             prompt: `${ap.prompt}\n\nYOUR PREVIOUS ATTEMPT BROKE THE USER'S REQUIREMENTS:\n- ${problems.join("\n- ")}\nRewrite it so every requirement holds.`,
           },
           { role: "answer", round: seg, key },
+          answerCap,
         );
-        if (constraintProblems(fix.text, st.constraints, ap.range || undefined, job.lang).length <= problems.length)
-          r = fix;
+        if (allProblems(fix.text).length <= problems.length) r = fix;
       }
       return r;
     }),
@@ -514,7 +617,15 @@ export async function runFollowUp(job: Job, question: string, deps: RunDeps): Pr
   for (const p of panel) {
     if (deps.isCancelled()) return;
     const sub: RunDeps = { ...deps };
-    const r = await runOne(job, p, relayPrompt(job, st, question, answers, before), "followup", n, sub);
+    const r = await runOne(
+      job,
+      p,
+      relayPrompt(job, st, question, answers, before),
+      "followup",
+      n,
+      sub,
+      `${job.goal}\n${question}`,
+    );
     if (r) before.push({ name: vendorName(p), text: r });
   }
   job.status = "partial";
@@ -551,6 +662,7 @@ async function runOne(
   role: "followup" | "debater",
   round: number,
   deps: RunDeps,
+  buildGoal?: string,
 ) {
   const key = `${role}|${round}|${p}`;
   try {
@@ -565,12 +677,14 @@ async function runOne(
       const cred = deps.credential(p as ProviderId);
       if (!cred) return null;
       deps.onLive?.(key, { role, round, provider: p, model: cred.model, text: "" });
+      // Build follow-ups need room for complete code; ordinary follow-ups keep the original 4,000-token cap.
+      const turnCap = buildGoal && wantsBuild(buildGoal) ? 6000 : 4000;
       const out = await complete(
         {
           ...cred,
           system: pr.system,
           prompt: pr.prompt,
-          maxTokens: 4000,
+          maxTokens: turnCap,
           signal: deps.signal,
           ...(deps.onLive
             ? { onDelta: (t: string) => deps.onLive!(key, { role, round, provider: p, model: cred.model, text: t }) }
@@ -585,10 +699,27 @@ async function runOne(
       const lw = wrongLanguage(text, job.lang);
       if (lw && !deps.isCancelled()) {
         const again = await complete(
-          { ...cred, system: pr.system, prompt: `${pr.prompt}\n\n${lw}`, maxTokens: 4000, signal: deps.signal },
+          { ...cred, system: pr.system, prompt: `${pr.prompt}\n\n${lw}`, maxTokens: turnCap, signal: deps.signal },
           deps.fetcher,
         );
         if (!wrongLanguage(again.text, job.lang)) text = again.text;
+        usage = { input: usage.input + again.usage.input, output: usage.output + again.usage.output };
+      }
+      // A follow-up that declines to build ("as an AI I cannot…, hire a developer") gets one retry told to
+      // deliver — only when the user opted in (Team → Data); the redo is an extra paid call.
+      const cr = deps.refusalRedo && buildGoal ? capabilityRefusal(text, buildGoal) : null;
+      if (cr && !deps.isCancelled()) {
+        const again = await complete(
+          {
+            ...cred,
+            system: pr.system,
+            prompt: `${pr.prompt}\n\nYOUR PREVIOUS REPLY FAILED THE USER: ${cr}`,
+            maxTokens: turnCap,
+            signal: deps.signal,
+          },
+          deps.fetcher,
+        );
+        if (!capabilityRefusal(again.text, buildGoal!)) text = again.text;
         usage = { input: usage.input + again.usage.input, output: usage.output + again.usage.output };
       }
       job.usage.input += usage.input;

@@ -1,0 +1,326 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { unzipSync, strFromU8 } from "fflate";
+import {
+  answerPrompt,
+  capabilityRefusal,
+  initCollection,
+  mediaNotes,
+  runCollection,
+  wantsBuild,
+} from "../src/core/collection";
+import { extractCodeFiles, fencedBlocks, makeZip, sanitizePath, ZIP_MAX_FILES } from "../src/core/codepack";
+import { newJob } from "../src/core/orchestrator";
+import { LIMITS } from "../src/core/plan";
+
+/* ---------- wantsBuild / capabilityRefusal ---------- */
+
+test("a build brief is recognised in Chinese and English; ordinary questions are not", () => {
+  assert.ok(wantsBuild("帮我做一个塔防小游戏的demo"));
+  assert.ok(wantsBuild("Build me a prototype app for shift planning"));
+  assert.ok(!wantsBuild("北美市场有哪些低成本生意？"));
+  assert.ok(!wantsBuild(""));
+});
+
+// The wording Juan screenshotted on 2026-11-18: Claude declines to code and redirects to outsourcing.
+const SCREENSHOT_STYLE =
+  "作为AI助手，我无法实际编写代码、构建项目或生成可执行文件。但我可以为你提供三种可行方案：方案二：外包开发团队，推荐平台：猪八戒网、程序员客栈，成本预估：8000-15000元。";
+
+test("a refusal that redirects to outsourcing is flagged on a build brief", () => {
+  const p = capabilityRefusal(SCREENSHOT_STYLE, "帮我做一个塔防游戏的demo");
+  assert.ok(p, "flagged");
+  assert.match(p!, /cannot|hands the work/);
+});
+
+test("clean answers and non-build briefs are not flagged", () => {
+  const withCode = "这是完整代码：\n```index.html\n<html><body>hi</body></html>\n```\n运行：浏览器打开即可。";
+  assert.equal(capabilityRefusal(withCode, "帮我做一个塔防游戏的demo"), null, "code delivered");
+  assert.equal(capabilityRefusal(SCREENSHOT_STYLE, "北美有哪些生意？"), null, "not a build brief");
+  assert.equal(
+    capabilityRefusal("攻城界面用 3×4 格子布局，基地每回合产出 50 金币（estimate: 同类H5游戏均值）。", "帮我做一个游戏demo"),
+    null,
+    "no refusal wording",
+  );
+  assert.equal(capabilityRefusal("I cannot attend the meeting.", "帮我做一个游戏demo"), null, "unrelated cannot");
+});
+
+/* ---------- prompts ---------- */
+
+test("build briefs get a completeness rule, other briefs keep the one-screen limit", () => {
+  const job = newJob({
+    goal: "帮我做一个塔防小游戏的demo",
+    mode: "live",
+    preset: "make_and_ship",
+    flow: "collection",
+    panel: ["anthropic"],
+    assignments: {},
+  });
+  const build = answerPrompt(job, job.collection!, 1, []);
+  assert.match(build.prompt, /deliver it COMPLETE/);
+  assert.match(build.prompt, /file name on the fence line/);
+  assert.ok(!/one phone screen/.test(build.prompt));
+
+  const chat = newJob({
+    goal: "北美市场有哪些低成本生意？",
+    mode: "live",
+    preset: "make_and_ship",
+    flow: "collection",
+    panel: ["anthropic"],
+    assignments: {},
+  });
+  const plain = answerPrompt(chat, chat.collection!, 1, []);
+  assert.match(plain.prompt, /one phone screen/);
+  assert.ok(!/deliver it COMPLETE/.test(plain.prompt));
+});
+
+test("the seeing agent's notes reach the answering agents' prompts", () => {
+  const job = newJob({
+    goal: "这张图里的菜单值多少钱？",
+    mode: "live",
+    preset: "make_and_ship",
+    flow: "collection",
+    panel: ["anthropic"],
+    assignments: {},
+  });
+  job.events.push({
+    role: "seer",
+    round: 0,
+    provider: "anthropic",
+    model: "claude-sonnet-4-5",
+    text: "图中是一张手写菜单：咖啡 30 元，三明治 45 元。",
+    usage: { input: 0, output: 0 },
+    at: new Date().toISOString(),
+  });
+  assert.match(mediaNotes(job), /手写菜单/);
+  const p = answerPrompt(job, job.collection!, 1, []);
+  assert.match(p.prompt, /NOTES ON THE ATTACHED FILES/);
+  assert.match(p.prompt, /咖啡 30 元/);
+});
+
+/* ---------- live run: seer pass + refusal retry (fake vendor) ---------- */
+
+const anthropicReply = (text: string) =>
+  new Response(
+    JSON.stringify({
+      content: [{ type: "text", text }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+      stop_reason: "end_turn",
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+
+test("collection run reads attached files once and, with the opt-in on, retries a refusal until code is delivered", async () => {
+  const bodies: string[] = [];
+  const replies = [
+    JSON.stringify({ broad: false, constraints: {} }), // 1: scope
+    "图中是一张游戏草图：3×4 格子，右下角一个基地。", // 2: seer
+    SCREENSHOT_STYLE, // 3: first answer — the refusal
+    "```index.html\n<!doctype html><html><body><canvas id='game'></canvas></body></html>\n```\n运行：用浏览器打开 index.html。", // 4: retry with code
+  ];
+  const fetcher = async (_url: string, init: RequestInit) => {
+    bodies.push(String(init.body));
+    return anthropicReply(replies.shift()!);
+  };
+  const job = newJob({
+    goal: "帮我做一个塔防小游戏的demo",
+    mode: "live",
+    preset: "make_and_ship",
+    flow: "collection",
+    panel: ["anthropic"],
+    assignments: {},
+    seer: "anthropic",
+  });
+  const deps = {
+    save: () => {},
+    isCancelled: () => false,
+    credential: () => ({ provider: "anthropic", model: "claude-sonnet-4-5", key: "sk-ant-test" }),
+    fetcher,
+    sleep: async () => {},
+    demoDelay: 0,
+    refusalRedo: true, // Team → Data opt-in: the refusal redo is an extra paid call
+    media: [{ name: "sketch.png", mime: "image/png", base64: "QUJD" }],
+  };
+  await runCollection(job, deps);
+
+  const seer = job.events.find((e) => e.role === "seer");
+  assert.ok(seer && !seer.failed, "the files were read");
+  assert.match(seer!.text, /草图/);
+
+  const answerBodies = bodies.slice(2);
+  assert.match(answerBodies[0], /草图：3×4 格子/, "the answering agent works from the seer's notes");
+  assert.equal(job.events.filter((e) => e.role === "answer").length, 1, "the retry replaces the refusal");
+  const answer = job.events.find((e) => e.role === "answer")!;
+  assert.ok(!answer.failed);
+  assert.match(answer.text, /```index\.html/, "the final answer delivers the code");
+  assert.ok(answerBodies.length >= 2, "the refusal was retried");
+  assert.match(answerBodies[1], /BROKE THE USER'S REQUIREMENTS/);
+});
+
+test("with the opt-in off (default), a refusal is delivered as-is and no extra paid call is made", async () => {
+  let calls = 0;
+  const fetcher = async () => {
+    calls++;
+    return anthropicReply(calls === 1 ? JSON.stringify({ broad: false, constraints: {} }) : SCREENSHOT_STYLE);
+  };
+  const job = newJob({
+    goal: "帮我做一个塔防小游戏的demo",
+    mode: "live",
+    preset: "make_and_ship",
+    flow: "collection",
+    panel: ["anthropic"],
+    assignments: {},
+  });
+  await runCollection(job, {
+    save: () => {},
+    isCancelled: () => false,
+    credential: () => ({ provider: "anthropic", model: "claude-sonnet-4-5", key: "k" }),
+    fetcher,
+    sleep: async () => {},
+    demoDelay: 0,
+    // refusalRedo intentionally unset: the default is off
+  });
+  const answer = job.events.find((e) => e.role === "answer")!;
+  assert.equal(answer.text, SCREENSHOT_STYLE, "delivered unchanged — no silent redo");
+  assert.equal(calls, 2, "scope + answer only; the redo did not spend another call");
+});
+
+test("the seer runs only once across resume and its failure does not kill the run", async () => {
+  let calls = 0;
+  const fetcher = async (_url: string, init: RequestInit) => {
+    calls++;
+    if (String(init.body).includes("Describe the attached files")) return new Response("bad key", { status: 400 });
+    return anthropicReply(calls === 1 ? JSON.stringify({ broad: false, constraints: {} }) : "正文答案。");
+  };
+  const job = newJob({
+    goal: "看看这张图的报价合理吗",
+    mode: "live",
+    preset: "make_and_ship",
+    flow: "collection",
+    panel: ["anthropic"],
+    assignments: {},
+    seer: "anthropic",
+  });
+  const deps = {
+    save: () => {},
+    isCancelled: () => false,
+    credential: () => ({ provider: "anthropic", model: "claude-sonnet-4-5", key: "k" }),
+    fetcher,
+    sleep: async () => {},
+    demoDelay: 0,
+    media: [{ name: "quote.png", mime: "image/png", base64: "QUJD" }],
+  };
+  await runCollection(job, deps);
+  const seer = job.events.find((e) => e.role === "seer");
+  assert.ok(seer?.failed, "the failed read is recorded, not hidden");
+  assert.ok(job.events.some((e) => e.role === "answer" && !e.failed), "the run carried on without the notes");
+  const callsAfterFirstRun = calls;
+  await runCollection(job, deps); // resume: user asked for more
+  assert.equal(
+    job.events.filter((e) => e.role === "seer").length,
+    1,
+    "no second paid seer call on resume",
+  );
+  assert.ok(calls > callsAfterFirstRun);
+});
+
+/* ---------- codepack ---------- */
+
+test("code blocks become files: fence name, title=, comment name, heading above", () => {
+  const md = [
+    "这是完整项目：",
+    "```index.html",
+    "<html><body>demo</body></html>",
+    "```",
+    "",
+    "```js title=\"src/game.js\"",
+    "console.log('hi')",
+    "```",
+    "",
+    "```python",
+    "# tools/build.py",
+    "print('build')",
+    "```",
+    "",
+    "### styles/main.css",
+    "```css",
+    "body { margin: 0; }",
+    "```",
+  ].join("\n");
+  const files = extractCodeFiles(md);
+  assert.deepEqual(
+    files.map((f) => f.name),
+    ["index.html", "src/game.js", "tools/build.py", "styles/main.css"],
+  );
+  assert.match(files[0].content, /<html>/);
+});
+
+test("unnamed blocks are skipped unless one block is the whole answer", () => {
+  assert.deepEqual(extractCodeFiles("说明：\n```\nsome inline snippet\n```\n```\nsecond\n```"), []);
+  const one = extractCodeFiles("```html\n<html></html>\n```");
+  assert.deepEqual(one.map((f) => f.name), ["main.html"]);
+});
+
+test("path traversal and device names cannot escape the zip", () => {
+  assert.equal(sanitizePath("../../etc/passwd.txt"), "etc/passwd.txt");
+  assert.equal(sanitizePath("/abs/x.js"), "abs/x.js");
+  assert.equal(sanitizePath("a/../b.js"), "a/b.js"); // traversal segment removed, path stays inside the zip
+  assert.equal(sanitizePath("CON.txt"), null);
+  assert.equal(sanitizePath("no-extension"), null);
+  assert.equal(sanitizePath("src/App.tsx"), "src/App.tsx");
+});
+
+test("a repeated file name keeps the latest revision", () => {
+  const md = "```a.js\nold\n```\n修正：\n```a.js\nnew\n```";
+  const files = extractCodeFiles(md);
+  assert.equal(files.length, 1);
+  assert.match(files[0].content, /new/);
+});
+
+test("makeZip writes a real archive that round-trips", () => {
+  const zip = makeZip([
+    { name: "index.html", content: "<html>你好</html>\n" },
+    { name: "src/game.js", content: "let x = 1;\n" },
+  ]);
+  const files = unzipSync(zip);
+  assert.deepEqual(Object.keys(files).sort(), ["index.html", "src/game.js"]);
+  assert.equal(strFromU8(files["index.html"]), "<html>你好</html>\n");
+});
+
+test("makeZip bounds: duplicate names get a suffix, oversized projects throw", () => {
+  const zip = makeZip([
+    { name: "a.js", content: "1" },
+    { name: "a.js", content: "2" },
+  ]);
+  const names = Object.keys(unzipSync(zip)).sort();
+  assert.deepEqual(names, ["a-2.js", "a.js"]);
+  assert.throws(
+    () => makeZip([{ name: "big.txt", content: "x".repeat(10 * 1024 * 1024 + 1) }]),
+    /10 MB limit/,
+  );
+  assert.throws(
+    () =>
+      makeZip(
+        Array.from({ length: ZIP_MAX_FILES + 1 }, (_, i) => ({ name: `f${i}.txt`, content: "x" })),
+      ),
+    /Too many files/,
+  );
+});
+
+test("fencedBlocks keeps the code verbatim", () => {
+  const b = fencedBlocks("```js\nconst a = `template`;\n```");
+  assert.equal(b[0].code, "const a = `template`;");
+});
+
+/* ---------- plan wiring ---------- */
+
+test("existing entitlements are preserved: Code (.zip) is a Pro export, the free list is unchanged", () => {
+  assert.deepEqual(LIMITS.free.exports, ["md", "pdf"]);
+  assert.ok(LIMITS.pro.exports.includes("codezip"));
+  assert.ok(LIMITS.pro.exports.includes("record"));
+});
+
+test("collection init still parses the brief", () => {
+  const st = initCollection("给我20个北美生意点子");
+  assert.equal(st.constraints.count, 20);
+  assert.equal(st.total, 2);
+});

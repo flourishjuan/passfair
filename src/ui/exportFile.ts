@@ -5,17 +5,19 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { Platform } from "react-native";
 import { type ExportFormat, formats, toDocx, toHtml, toPptx } from "../core/export";
+import { extractCodeFiles, makeZip } from "../core/codepack";
 import { type Job, approvalOf, lastDeliverable } from "../core/orchestrator";
 import { collectionText, vendorName } from "../core/collection";
 
 export type { ExportFormat };
-export type ExportChoice = ExportFormat | "record";
-export const exportOrder: ExportChoice[] = ["pdf", "docx", "pptx", "md", "record"];
+export type ExportChoice = ExportFormat | "codezip" | "record";
+export const exportOrder: ExportChoice[] = ["pdf", "docx", "pptx", "md", "codezip", "record"];
 export const exportLabel: Record<ExportChoice, string> = {
   pdf: "PDF",
   docx: "Word",
   pptx: "PowerPoint",
   md: "Markdown",
+  codezip: "Code (.zip)",
   record: "Full record",
 };
 
@@ -75,6 +77,39 @@ export function exportMeta(job: Job) {
 
 export async function exportJob(job: Job, choice: ExportChoice): Promise<void> {
   if (job.mode === "demo") throw new Error("The demo is a scripted sample, not your work — nothing to export.");
+
+  // Code (.zip): every fenced code block that carries a file name becomes a real file in one archive.
+  if (choice === "codezip") {
+    const src = job.flow === "collection" ? collectionExport(job) : job.final || lastDeliverable(job);
+    const files = extractCodeFiles(src);
+    if (!files.length)
+      throw new Error(
+        "No code files in this answer yet. Ask the agents for complete code — every file in its own ``` block with its file name on the fence line — then download again.",
+      );
+    const zip = makeZip(files);
+    const name = `${exportMeta(job).filename}-code.zip`;
+    if (Platform.OS === "web") {
+      const url = URL.createObjectURL(new Blob([zip.slice()], { type: "application/zip" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return;
+    }
+    const file = new File(Paths.cache, name);
+    if (file.exists) file.delete();
+    file.create();
+    await file.write(zip);
+    if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing is not available on this device.");
+    await Sharing.shareAsync(file.uri, {
+      mimeType: "application/zip",
+      UTI: "public.zip-archive",
+      dialogTitle: `Export ${files.length} code files`,
+    });
+    return;
+  }
+
   const format: ExportFormat = choice === "record" ? "md" : choice;
   // No draft yet (the run stopped after the brainstorm): export the decision instead of nothing.
   // A collection exports every AI's answer under its name (follow-ups and debate included).

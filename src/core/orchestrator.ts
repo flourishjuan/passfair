@@ -734,6 +734,8 @@ export interface RunDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Attached images / PDFs / video for this run. Kept in memory only, never saved with the job. */
   media?: MediaItem[];
+  /** Opt-in (Team → Data): redo one answer that declines to build. Each redo is an extra paid call. */
+  refusalRedo?: boolean;
   /** The text an agent has written so far, while it writes (null = that agent's turn is over). */
   onLive?: (key: string, live: LiveTurn | null) => void;
 }

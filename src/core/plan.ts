@@ -12,7 +12,7 @@ export interface Limits {
   office: boolean; // Word / Excel / PowerPoint uploads
   video: boolean;
   notebook: boolean; // team notebook: approved work carried into future briefs
-  exports: ("md" | "pdf" | "docx" | "pptx" | "record")[];
+  exports: ("md" | "pdf" | "docx" | "pptx" | "codezip" | "record")[];
 }
 export const LIMITS: Record<Tier, Limits> = {
   free: {
@@ -39,7 +39,7 @@ export const LIMITS: Record<Tier, Limits> = {
     office: true,
     video: true,
     notebook: true,
-    exports: ["md", "pdf", "docx", "pptx", "record"],
+    exports: ["md", "pdf", "docx", "pptx", "codezip", "record"],
   },
 };
 export const PRO_PRODUCTS = {

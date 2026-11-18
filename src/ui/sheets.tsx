@@ -630,6 +630,12 @@ export function TeamSheet(p: {
           disabled={!canSearch}
           onChange={(v) => (L.research ? p.onChange({ research: v }) : p.onPro())}
         />
+        <ToggleRow
+          label="Redo answers that give up on building"
+          note="When an agent declines to code and redirects you elsewhere instead of delivering, it is asked once more to deliver the complete files. Each redo is one extra AI call, billed to your key. Off by default."
+          value={!!p.settings.refusalRedo}
+          onChange={(v) => p.onChange({ refusalRedo: v })}
+        />
       </Section>
       <Section title="Hand off to Muse">
         <Row>

@@ -262,6 +262,7 @@ export function useStudio(toast: Toast, tier: Tier) {
           signal: ac.signal,
           demoDelay: 650,
           media: mediaRef.current.get(j.id),
+          refusalRedo: !!settingsRef.current.refusalRedo,
           onLive,
           fetcher: streamingFetch,
         };
@@ -396,7 +397,7 @@ export function useStudio(toast: Toast, tier: Tier) {
       // A real brief is never answered by the scripted sample: no connected agent means no run.
       if (!connectedIds.length) throw new Error("Connect an agent first: tap ••• at the top left.");
       const files = opts.files || [];
-      const { media, context } = prepareFiles(files);
+      const { media, seer, context } = prepareFiles(files);
       const s = settingsRef.current;
       const j = newJob({
         goal,
@@ -406,6 +407,7 @@ export function useStudio(toast: Toast, tier: Tier) {
         flow: "collection",
         panel,
         assignments: {},
+        seer,
         attachments: files.map((a) => ({ name: a.name, mime: a.mime, kind: a.kind, chars: a.text?.length })),
         previousLang: s.lastLang,
         knowledge: knowledgeBlock(
