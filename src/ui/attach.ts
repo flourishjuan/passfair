@@ -5,7 +5,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { File } from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import { Platform } from "react-native";
-import { type Attachment, htmlToText, kindOf, mimeFor, officeToText, utf8 } from "../core/material";
+import { type Attachment, htmlToText, kindOf, mimeFor, officeToText, utf8, zipToText } from "../core/material";
 
 const MAX_BINARY = 18 * 1024 * 1024; // inline limit most vendors accept
 const MAX_TEXT_FILE = 5 * 1024 * 1024;
@@ -33,7 +33,14 @@ async function read(name: string, mime: string, uri: string, size: number): Prom
     if (size > MAX_TEXT_FILE) throw new Error(`${name} is too large (max 5 MB of text).`);
     return { ...base, text: utf8(await bytesOf(uri)) };
   }
-  if (kind === "office") return { ...base, text: officeToText(await bytesOf(uri), name) };
+  if (kind === "office") {
+    if (size > MAX_BINARY) throw new Error(`${name} is ${Math.round(size / 1e6)} MB — the limit is 18 MB.`);
+    return { ...base, text: officeToText(await bytesOf(uri), name) };
+  }
+  if (kind === "zip") {
+    if (size > MAX_BINARY) throw new Error(`${name} is ${Math.round(size / 1e6)} MB — the limit is 18 MB.`);
+    return { ...base, text: zipToText(await bytesOf(uri), name) };
+  }
   if (size > MAX_BINARY)
     throw new Error(`${name} is ${Math.round(size / 1e6)} MB — the limit is 18 MB. Trim it first.`);
   return { ...base, base64: await base64Of(uri) };

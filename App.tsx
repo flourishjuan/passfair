@@ -582,6 +582,7 @@ function Main({ toast, toastMsg, proCached }: { toast: (m: string) => void; toas
                           audio: "🎙",
                           pdf: "📄",
                           office: "📊",
+                          zip: "📦",
                           link: "🔗",
                           text: "📝",
                           unsupported: "?",

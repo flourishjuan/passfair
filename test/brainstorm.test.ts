@@ -260,7 +260,7 @@ test("uploads: Word, PowerPoint, web pages and text become material; types are r
   assert.equal(kindOf("a.pdf", mimeFor("a.pdf")), "pdf");
   assert.equal(kindOf("clip.mov", mimeFor("clip.mov")), "video");
   assert.equal(kindOf("data.csv", mimeFor("data.csv", "application/octet-stream")), "text");
-  assert.equal(kindOf("x.zip", "application/zip"), "unsupported");
+  assert.equal(kindOf("x.zip", "application/zip"), "zip");
   const m = materialFrom(
     [{ id: "1", name: "a.txt", mime: "text/plain", kind: "text", size: 3, text: "x".repeat(50) }],
     20,

@@ -360,8 +360,8 @@ export function useStudio(toast: Toast, tier: Tier) {
     if (!limits.pdf && bin.some((a) => a.kind === "pdf")) throw new Error("PDF reading is a Pro feature.");
     if (!limits.video && bin.some((a) => a.kind === "video" || a.kind === "audio"))
       throw new Error("Video and audio are Pro features.");
-    if (!limits.office && files.some((a) => a.kind === "office"))
-      throw new Error("Word, Excel and PowerPoint are Pro features.");
+    if (!limits.office && files.some((a) => a.kind === "office" || a.kind === "zip"))
+      throw new Error("Word, Excel, PowerPoint and zip archives are Pro features.");
     const media: MediaItem[] = bin.map((a) => ({ name: a.name, mime: a.mime, base64: a.base64! }));
     let seer: ProviderId | undefined;
     if (media.length) {

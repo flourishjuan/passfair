@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { unzipSync, strFromU8 } from "fflate";
+import { unzipSync, strFromU8, strToU8, zipSync } from "fflate";
 import {
   answerPrompt,
   capabilityRefusal,
@@ -10,6 +10,7 @@ import {
   wantsBuild,
 } from "../src/core/collection";
 import { extractCodeFiles, fencedBlocks, makeZip, sanitizePath, ZIP_MAX_FILES } from "../src/core/codepack";
+import { kindOf, officeToText, zipToText } from "../src/core/material";
 import { newJob } from "../src/core/orchestrator";
 import { LIMITS } from "../src/core/plan";
 
@@ -323,4 +324,164 @@ test("collection init still parses the brief", () => {
   const st = initCollection("给我20个北美生意点子");
   assert.equal(st.constraints.count, 20);
   assert.equal(st.total, 2);
+});
+
+/* ---------- data-package (zip) upload: bounded streaming extraction ---------- */
+
+function patchDeclaredUncompressedSize(zip: Uint8Array, declared: number): Uint8Array {
+  // Forge the header: claim a tiny uncompressed size in BOTH the local header and the central
+  // directory while the real deflate stream stays huge. This is the attack header-trusting
+  // extractors lose to. Local header: sig PK\x03\x04, uncompressed size at +22.
+  // Central directory: sig PK\x01\x02, uncompressed size at +24.
+  const z = zip.slice();
+  const w = (o: number) => {
+    z[o] = declared & 255;
+    z[o + 1] = (declared >> 8) & 255;
+    z[o + 2] = (declared >> 16) & 255;
+    z[o + 3] = (declared >> 24) & 255;
+  };
+  assert.equal(z[0], 0x50, "local header sig");
+  assert.equal(z[1], 0x4b);
+  assert.equal(z[2], 3);
+  assert.equal(z[3], 4);
+  w(22);
+  for (let i = 0; i < z.length - 4; i++) {
+    if (z[i] === 0x50 && z[i + 1] === 0x4b && z[i + 2] === 1 && z[i + 3] === 2) {
+      w(i + 24);
+      break;
+    }
+  }
+  return z;
+}
+
+test("a zip upload is read as material: text members extracted, binary and nested zips listed only", () => {
+  const inner = zipSync({ "secret.txt": strToU8("nested") });
+  const archive = zipSync({
+    "data/prices.csv": strToU8("item,price\ncoffee,30\n"),
+    "notes.md": strToU8("# 计划\n先卖咖啡。\n"),
+    "logo.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]),
+    "inner.zip": inner,
+  });
+  assert.equal(kindOf("bundle.zip", "application/zip"), "zip");
+  assert.equal(kindOf("bundle.zip", "application/octet-stream"), "zip");
+  const text = zipToText(archive, "bundle.zip");
+  assert.match(text, /prices\.csv/);
+  assert.match(text, /coffee,30/);
+  assert.match(text, /先卖咖啡/);
+  assert.match(text, /logo\.png \(binary - not read\)/);
+  assert.match(text, /inner\.zip \(nested zip - not opened\)/);
+  assert.doesNotMatch(text, /secret\.txt/); // the nested archive is never examined
+});
+
+test("zip safety: a damaged zip says so plainly", () => {
+  assert.throws(
+    () => zipToText(strToU8("this is not a zip"), "bad.zip"),
+    /could not read this zip/,
+  );
+});
+
+test("zip safety: a 50 MB bomb is stopped by actual decompressed bytes, not by the header", () => {
+  const huge = strToU8("y".repeat(50 * 1024 * 1024));
+  const bomb = zipSync({ "huge.txt": huge });
+  assert.ok(bomb.length < 200_000, `the bomb is tiny compressed (${bomb.length} bytes)`);
+  for (const [label, archive] of [
+    ["honest header", bomb],
+    ["forged header claiming 100 bytes", patchDeclaredUncompressedSize(bomb, 100)],
+  ] as const) {
+    const started = Date.now();
+    const text = zipToText(archive, "bomb.zip");
+    assert.ok(Date.now() - started < 10_000, `${label}: reading stops promptly`);
+    assert.ok(text.length < 260_000, `${label}: retained text stays near the 200 KB budget (got ${text.length})`);
+    assert.match(text, /expands past 2[0-9] MB of actual data/, label);
+    assert.match(text, /over 2 MB of actual data - only the first part shown/, label);
+    assert.match(text, /0 text members extracted/, label); // a bomb yields no usable text at all
+  }
+});
+
+test("zip safety: member count is capped and huge single members are cut", () => {
+  const many: Record<string, Uint8Array> = {};
+  for (let i = 0; i < 210; i++) many[`f${i}.txt`] = strToU8(`file ${i}`);
+  const text = zipToText(zipSync(many), "many.zip");
+  assert.match(text, /10 further members beyond the 200-member limit - not read/);
+
+  const big = zipSync({ "huge.txt": strToU8("y".repeat(3 * 1024 * 1024)), "small.txt": strToU8("ok") });
+  const t2 = zipToText(big, "mixed.zip");
+  assert.match(t2, /huge\.txt: over 2 MB of actual data - only the first part shown/);
+  assert.match(t2, /small\.txt/); // the next member is still read
+});
+
+test("zip upload: unknown extensions are sniffed by content, and the budget is shared across members", () => {
+  const textFile = strToU8("plain words, no extension to help\n".repeat(100));
+  const binFile = new Uint8Array(600);
+  binFile[0] = 0; // NUL byte marks it binary
+  const archive = zipSync({ "mystery1": textFile, "mystery2": binFile });
+  const text = zipToText(archive, "mystery.zip");
+  assert.match(text, /=== FILE: mystery1 ===\nplain words/);
+  assert.match(text, /mystery2 \(binary - not read\)/);
+
+  const half = strToU8("z".repeat(150_000));
+  const two = zipToText(zipSync({ "a.txt": half, "b.txt": half, "c.txt": half }), "two.zip");
+  assert.ok(two.length < 260_000, "three 150 KB members share the 200 KB budget");
+  assert.match(two, /cut at the shared text budget|text budget used up/);
+});
+
+test("zip safety: the zip64 size marker is rejected up front (fflate z64e never runs)", () => {
+  // fflate 0.8.2's streaming parser hangs in z64e when a local header declares the 0xFFFFFFFF
+  // compressed-size marker without a zip64 extra field. The reader must reject this before parsing.
+  const good = zipSync({ "a.csv": strToU8("x,1\ny,2\n") });
+  const z = good.slice();
+  z[18] = z[19] = z[20] = z[21] = 0xff; // local header compressed size = the zip64 marker
+  assert.throws(() => zipToText(z, "z64.zip"), /zip64 archives are not supported/);
+  // and the honest archive still reads fine
+  assert.match(zipToText(good, "good.zip"), /a\.csv/);
+});
+
+/* ---------- Office (docx/xlsx/pptx): bounded streaming reader ---------- */
+
+function forgeCentralUncompressedSize(zip: Uint8Array, declared: number): Uint8Array {
+  // Forge every central-directory entry's declared uncompressed size (offset +24 from PK\x01\x02).
+  const z = zip.slice();
+  for (let i = 0; i < z.length - 28; i++) {
+    if (z[i] === 0x50 && z[i + 1] === 0x4b && z[i + 2] === 1 && z[i + 3] === 2) {
+      z[i + 24] = declared & 255;
+      z[i + 25] = (declared >> 8) & 255;
+      z[i + 26] = (declared >> 16) & 255;
+      z[i + 27] = (declared >> 24) & 255;
+    }
+  }
+  return z;
+}
+
+const docxShape = () =>
+  zipSync({
+    "[Content_Types].xml": strToU8("<Types/>"),
+    "word/document.xml": strToU8("<w:body><w:p><w:r><w:t>Hello contract</w:t></w:r></w:p></w:body>"),
+    "word/media/logo.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  });
+
+test("office regression: a docx declaring 2 GB / 8 GB in its central directory reads bounded, no huge allocation", () => {
+  // Baseline officeToText allocated the declared size up front (8 GB -> RangeError, 2 GB -> real
+  // 2 GB allocation). The bounded reader never consults declared sizes.
+  for (const declared of [2_000_000_000, 8_000_000_000]) {
+    const forged = forgeCentralUncompressedSize(docxShape(), declared);
+    const before = process.memoryUsage().heapUsed;
+    const out = officeToText(forged, "case.docx");
+    assert.match(out, /Hello contract/);
+    assert.ok(process.memoryUsage().heapUsed - before < 50_000_000, `no huge allocation for declared ${declared}`);
+  }
+  // forged local-header zip64 marker: rejected before parsing
+  const z = docxShape();
+  z[18] = z[19] = z[20] = z[21] = 0xff;
+  assert.throws(() => officeToText(z, "z64.docx"), /zip64 archives are not supported/);
+});
+
+test("office: damaged archives and oversized members fail clean - never a partial document", () => {
+  assert.throws(() => officeToText(strToU8("not a document"), "bad.docx"), /could not read this document/);
+  const big = zipSync({
+    "[Content_Types].xml": strToU8("<Types/>"),
+    "word/document.xml": strToU8(`<w:body><w:p>${"x".repeat(5 * 1024 * 1024)}</w:p></w:body>`),
+  });
+  assert.throws(() => officeToText(big, "big.docx"), /too large to read/);
+  // and the honest document still extracts, media members skipped
+  assert.match(officeToText(docxShape(), "ok.docx"), /Hello contract/);
 });
