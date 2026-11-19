@@ -260,7 +260,10 @@ export function useStudio(toast: Toast, tier: Tier) {
           isCancelled: () => ac.signal.aborted,
           credential: (p) => creds[p] || null,
           signal: ac.signal,
-          demoDelay: 650,
+          // Demo-only pacing (live runs never read this): each scripted stage plays out over
+          // ~20 s, like a real run, so the sample actually demonstrates the run — including
+          // the Android foreground-service notification while it is "working".
+          demoDelay: 20000,
           media: mediaRef.current.get(j.id),
           refusalRedo: !!settingsRef.current.refusalRedo,
           onLive,

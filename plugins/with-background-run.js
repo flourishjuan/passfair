@@ -3,7 +3,16 @@
 const { withAndroidManifest } = require("@expo/config-plugins");
 
 const SERVICE = "com.asterinet.react.bgactions.RNBackgroundActionsTask";
-const PERMISSIONS = ["android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_DATA_SYNC"];
+const PERMISSIONS = [
+  "android.permission.FOREGROUND_SERVICE",
+  "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+  // react-native-background-actions acquires a wake lock when its service starts; without this
+  // permission Android kills the app with a SecurityException the moment a run goes to background.
+  "android.permission.WAKE_LOCK",
+  // Android 13+: the "agents are working" foreground-service notification is only visible (and the
+  // system settings toggle only enabled) when this permission is declared and granted.
+  "android.permission.POST_NOTIFICATIONS",
+];
 
 module.exports = function withBackgroundRun(config) {
   return withAndroidManifest(config, (c) => {

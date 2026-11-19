@@ -2,7 +2,7 @@
 //   Android: a foreground service ("Passfair agents are working" notification) keeps the run alive to the end.
 //   iOS: the system grants a short background window (about 30 s); when it ends the run pauses cleanly and
 //   resumes by itself, from the step it was on, as soon as Passfair is opened again.
-import { Platform } from "react-native";
+import { PermissionsAndroid, Platform } from "react-native";
 
 function lib(): any | null {
   if (Platform.OS === "web") return null;
@@ -20,6 +20,13 @@ let release: (() => void) | null = null;
 export async function holdBackground(onExpire: () => void): Promise<void> {
   const bg = lib();
   if (!bg || bg.isRunning()) return;
+  // Android 13+: ask for the notification permission so the "agents are working" notice can
+  // actually appear. Denial never blocks the run; the service still keeps it alive.
+  if (Platform.OS === "android" && typeof Platform.Version === "number" && Platform.Version >= 33) {
+    try {
+      await PermissionsAndroid.request("android.permission.POST_NOTIFICATIONS" as never);
+    } catch {}
+  }
   try {
     bg.removeAllListeners?.("expiration");
     bg.on?.("expiration", onExpire);

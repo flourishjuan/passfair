@@ -27,7 +27,7 @@
     },
     "android": {
       "package": "ai.agentsfair.passfair",
-      "versionCode": 7,
+      "versionCode": 9,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
